@@ -1,0 +1,79 @@
+spring:
+  application:
+    name: patternforge
+  
+  datasource:
+    url: jdbc:postgresql://localhost:5432/patternforge
+    username: postgres
+    password: postgres 
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+  
+  jooq:
+    sql-dialect: POSTGRES
+
+# Server configuration
+server:
+  port: 15550
+  shutdown: graceful
+
+# Actuator endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# PatternForge specific configuration
+patternforge:
+  # Ollama embedding service
+  ollama:
+    url: http://localhost:11434
+    model: nomic-embed-text
+    enabled: true
+    timeout: 30000  # 30 seconds
+  
+  # OpenCode integration
+  opencode:
+    config-path: ${HOME}/.config/opencode/opencode.json
+    projects-root: ${HOME}/Dev-Work/Work/work
+  
+  # Workflow resolution
+  workflow:
+    user-workflows-enabled: true
+    reload-on-query: true  # Always load fresh (Option C)
+    project-workflow-dirs:
+      - .opencode/workflows
+      - .claude/workflows
+      - .agent/workflows
+    global-workflow-paths:
+      - ${HOME}/.config/opencode/workflows
+      - ${HOME}/.claude/workflows
+
+  # Pattern extraction via LLM
+  extraction:
+    llm-model: claude-sonnet-4-6
+    temperature: 0.1
+    max-tokens: 4000
+
+  # Anthropic API client
+  anthropic:
+    api-key: ${ANTHROPIC_API_KEY:}
+    base-url: https://api.anthropic.com
+    api-version: 2023-06-01
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.patternforge: DEBUG
+    org.jooq: DEBUG
+    org.springframework.web: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

@@ -1,0 +1,59 @@
+# ─── Build output ────────────────────────────────────────────────────────────
+target/
+bin/
+*.jar
+*.class
+*.war
+
+# ─── IDE ─────────────────────────────────────────────────────────────────────
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Eclipse / STS
+.classpath
+.factorypath
+.project
+.settings/
+.sts4-cache/
+
+# VS Code
+.vscode/
+
+# NetBeans
+nbproject/
+
+# ─── Maven ───────────────────────────────────────────────────────────────────
+# Keep mvnw and .mvn/ if you use Maven wrapper (not present here, but future-proof)
+# .mvn/
+# mvnw
+# mvnw.cmd
+
+# ─── Secrets & local environment ─────────────────────────────────────────────
+.env
+.env.*
+*.env
+application-local.yml
+application-local.yaml
+application-secret.yml
+application-secret.yaml
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+*.log
+logs/
+spring.log
+
+# ─── Runtime / temp ──────────────────────────────────────────────────────────
+*.tmp
+*.temp
+*.pid
+
+# ─── Agent tool local settings (machine-specific, not for sharing) ────────────
+.claude/settings.local.json
+
+# ─── OS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

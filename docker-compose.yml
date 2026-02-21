@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  patternforge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: patternforge-app
+    environment:
+      # Use host.docker.internal to connect to services running on host machine
+      SPRING_DATASOURCE_URL: jdbc:postgresql://host.docker.internal:5432/patternforge
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      PATTERNFORGE_OLLAMA_URL: http://host.docker.internal:11434
+      PATTERNFORGE_OLLAMA_MODEL: nomic-embed-text
+      JAVA_OPTS: "-Xmx512m -Xms256m"
+    ports:
+      - "15550:15550"
+      - "8765:8765"
+    volumes:
+      - app_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:15550/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    extra_hosts:
+      # Required for Docker Desktop to access host machine services
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  app_logs:
+    name: patternforge_app_logs

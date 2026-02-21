@@ -1,0 +1,38 @@
+# Source files (only JAR needed)
+src/
+.git/
+.gitignore
+
+# Build artifacts (except final JAR)
+target/*
+!target/pattern-forge-1.0.0-SNAPSHOT.jar
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+bin/
+
+# OpenCode files
+.opencode/
+.opencode-*
+AGENTS*.md
+
+# Documentation
+*.md
+!README.md
+
+# Local config
+.env
+.env.*
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# PatternForge post-commit hook
+# Auto-extracts coding patterns from changed files after every commit.
+# Works with any agentic CLI tool (Claude Code, OpenCode, Aider, Cursor, etc.)
+#
+# Install: run scripts/install-hooks.sh from your project root.
+
+PATTERNFORGE_URL="${PATTERNFORGE_URL:-http://localhost:15550}"
+PROJECT_PATH="$(git rev-parse --show-toplevel)"
+
+# File patterns worth extracting rules from
+RELEVANT_EXTENSIONS="java|kt|py|ts|tsx|js|go|rs|rb|md"
+RELEVANT_FILENAMES="CLAUDE.md|AGENTS.md|MULTI_AGENT_WORKFLOW.md|opencode.json|.cursorrules|GEMINI.md"
+
+# Check PatternForge is reachable (fail silently — never block commits)
+if ! curl -sf --max-time 2 "${PATTERNFORGE_URL}/actuator/health" > /dev/null 2>&1; then
+  exit 0
+fi
+
+# Get files changed in this commit
+CHANGED_FILES=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null)
+
+if [ -z "$CHANGED_FILES" ]; then
+  exit 0
+fi
+
+EXTRACTED=0
+
+while IFS= read -r relative_path; do
+  # Filter by extension or known filename
+  filename=$(basename "$relative_path")
+  extension="${filename##*.}"
+
+  is_relevant=false
+
+  # Check extension
+  if echo "$extension" | grep -qE "^(${RELEVANT_EXTENSIONS})$"; then
+    is_relevant=true
+  fi
+
+  # Check known filenames (exact match)
+  if echo "$filename" | grep -qE "^(${RELEVANT_FILENAMES})$"; then
+    is_relevant=true
+  fi
+
+  if [ "$is_relevant" = false ]; then
+    continue
+  fi
+
+  absolute_path="${PROJECT_PATH}/${relative_path}"
+
+  # Skip if file was deleted
+  [ -f "$absolute_path" ] || continue
+
+  # Call PatternForge extract endpoint (background, non-blocking)
+  curl -sf --max-time 10 \
+    -X POST "${PATTERNFORGE_URL}/api/patterns/extract" \
+    -H "Content-Type: application/json" \
+    -d "{\"filePath\": \"${absolute_path}\", \"projectPath\": \"${PROJECT_PATH}\"}" \
+    > /dev/null 2>&1 &
+
+  EXTRACTED=$((EXTRACTED + 1))
+
+done <<< "$CHANGED_FILES"
+
+if [ "$EXTRACTED" -gt 0 ]; then
+  echo "[PatternForge] Queued pattern extraction for ${EXTRACTED} file(s) → ${PATTERNFORGE_URL}"
+fi
+
+exit 0

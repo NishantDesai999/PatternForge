@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  patternforge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: patternforge-app-dev
+    environment:
+      # Use host.docker.internal to connect to services running on host machine
+      SPRING_DATASOURCE_URL: jdbc:postgresql://host.docker.internal:5432/patternforge
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      PATTERNFORGE_OLLAMA_URL: http://host.docker.internal:11434
+      PATTERNFORGE_OLLAMA_MODEL: nomic-embed-text
+      SPRING_DEVTOOLS_RESTART_ENABLED: "true"
+      JAVA_OPTS: "-Xmx512m -Xms256m -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:8765"
+    ports:
+      - "15550:15550"
+      - "8765:8765"
+    volumes:
+      # Mount for live reload during development
+      - ./target:/app/target:ro
+      # Mount OpenCode config for pattern access
+      - ~/.config/opencode:/root/.config/opencode:ro
+      # Mount work directory for scanning projects
+      - ~/Dev-Work/Work/work:/workspace:ro
+      # Logs
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:15550/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    extra_hosts:
+      # Required for Docker Desktop to access host machine services
+      - "host.docker.internal:host-gateway"

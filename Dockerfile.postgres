@@ -1,0 +1,7 @@
+# Adds pgvector to the locally available postgres:17 image.
+# No extra image is downloaded — builds directly on top of postgres:17.
+FROM postgres:17
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-17-pgvector \
+    && rm -rf /var/lib/apt/lists/*
