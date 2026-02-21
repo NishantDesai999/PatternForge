@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Install PatternForge git hooks into a project.
+# Install PatternForge git hooks and/or Claude Code hooks.
 #
 # Usage (run from any git project root):
 #   bash /path/to/pattern-forge/scripts/install-hooks.sh
 #
-# Or install globally for all new repos via git init template:
+# Install globally for all new repos:
 #   bash /path/to/pattern-forge/scripts/install-hooks.sh --global
+#
+# Install Claude Code PostToolUse hook (auto-capture from Claude Code sessions):
+#   bash /path/to/pattern-forge/scripts/install-hooks.sh --claude-code
 #
 # Environment:
 #   PATTERNFORGE_URL  Override the PatternForge server URL (default: http://localhost:15550)
@@ -14,14 +17,71 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK_SRC="${SCRIPT_DIR}/hooks/post-commit"
+CLAUDE_CODE_HOOK_SRC="${SCRIPT_DIR}/hooks/claude-code-post-tool-use.sh"
 GLOBAL=false
+CLAUDE_CODE=false
 
 for arg in "$@"; do
   case "$arg" in
     --global) GLOBAL=true ;;
+    --claude-code) CLAUDE_CODE=true ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
+
+# ─────────────────────────────────────────────────────────────────
+# Claude Code hook installation
+# ─────────────────────────────────────────────────────────────────
+if [ "$CLAUDE_CODE" = true ]; then
+  CLAUDE_SETTINGS_DIR="${HOME}/.claude"
+  CLAUDE_HOOKS_DIR="${CLAUDE_SETTINGS_DIR}/hooks"
+  mkdir -p "$CLAUDE_HOOKS_DIR"
+
+  # Copy the hook script
+  HOOK_DEST="${CLAUDE_HOOKS_DIR}/patternforge-post-tool-use.sh"
+  cp "$CLAUDE_CODE_HOOK_SRC" "$HOOK_DEST"
+  chmod +x "$HOOK_DEST"
+
+  # Check if settings.json exists and update it
+  SETTINGS_FILE="${CLAUDE_SETTINGS_DIR}/settings.json"
+
+  if [ -f "$SETTINGS_FILE" ]; then
+    echo "[PatternForge] Claude Code settings.json found at ${SETTINGS_FILE}"
+    echo "  Add the following PostToolUse hook manually (or it may already be configured):"
+  else
+    echo "[PatternForge] Creating ${SETTINGS_FILE}"
+    cat > "$SETTINGS_FILE" << EOF
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HOOK_DEST}"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  fi
+
+  echo ""
+  echo "  PostToolUse hook to add to ~/.claude/settings.json:"
+  echo '  "PostToolUse": ['
+  echo '    {'
+  echo '      "matcher": "Edit|Write|MultiEdit",'
+  echo '      "hooks": [{"type": "command", "command": "'"${HOOK_DEST}"'"}]'
+  echo '    }'
+  echo '  ]'
+  echo ""
+  echo "[PatternForge] Claude Code hook installed → ${HOOK_DEST}"
+  echo "  File edits in Claude Code sessions will auto-capture patterns."
+  exit 0
+fi
 
 if [ "$GLOBAL" = true ]; then
   # Install into git's global init template so every new `git init` gets the hook

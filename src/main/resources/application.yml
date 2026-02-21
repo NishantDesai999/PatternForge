@@ -55,6 +55,7 @@ patternforge:
     global-workflow-paths:
       - ${HOME}/.config/opencode/workflows
       - ${HOME}/.claude/workflows
+      - ${HOME}/.patternforge/workflows
 
   # Pattern extraction via LLM
   extraction:

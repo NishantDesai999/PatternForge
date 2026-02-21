@@ -4,6 +4,9 @@ PatternForge is a **runtime knowledge system** for AI coding agents. Instead of 
 of rules, agents query PatternForge and receive only the 5–7 patterns relevant to their current
 task, plus a step-by-step workflow. This keeps agents focused and dramatically reduces token usage.
 
+**You do not need to copy this file into other projects.** Use the MCP server or REST API to pull
+standards and workflows on demand — no duplication across repos.
+
 This file is the single source of truth for any agent working on the PatternForge codebase
 (Claude Code, OpenCode, Aider, Cursor, Gemini CLI, etc.).
 
@@ -65,11 +68,24 @@ curl http://localhost:15550/api/patterns | jq 'length'
 | POST | `/api/patterns/query` | Query patterns + workflow for a task |
 | POST | `/api/patterns/extract` | LLM-extract patterns from a file and upsert |
 
-### MCP Server — port 8765
+### MCP Server — port 8765 (JSON-RPC 2.0)
+
+The MCP server implements the [Model Context Protocol](https://modelcontextprotocol.io) so any
+MCP-compatible agent (Claude Code, Cursor, Windsurf, etc.) can discover and call PatternForge
+tools without any extra configuration beyond pointing to the server URL.
+
+| Tool | Description |
+|------|-------------|
+| `query_patterns` | Get patterns + workflow for a task |
+| `capture_pattern` | Capture a pattern from the current session |
+| `get_standards` | Get all standards as a formatted document |
+| `record_usage` | Record whether a pattern was applied successfully |
+
+**Legacy HTTP endpoint** (kept for backwards compat):
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/mcp/query` | Same as `/api/patterns/query` (OpenCode integration) |
+| POST | `/mcp/query` | Same as `/api/patterns/query` (OpenCode / legacy) |
 
 ### Query request body
 
@@ -124,6 +140,140 @@ curl http://localhost:15550/api/patterns | jq 'length'
   }
 }
 ```
+
+---
+
+## MCP Integration — Zero Copy-Paste Setup
+
+Add PatternForge as an MCP server once and every project gets patterns + workflows automatically.
+No more copying `AGENTS.md` or `CLAUDE.md` into new repos.
+
+### Claude Code
+
+Add to `~/.claude.json` (global) or the project's `.mcp.json` (project-only):
+
+```json
+{
+  "mcpServers": {
+    "patternforge": {
+      "type": "http",
+      "url": "http://localhost:8765/mcp"
+    }
+  }
+}
+```
+
+Then agents call tools directly instead of querying via curl:
+
+```
+query_patterns(task="Fix failing test", language="java", projectPath="/my/project")
+capture_pattern(description="Always use Objects.nonNull() for null checks", source="user_explicit", projectPath="/my/project")
+get_standards(projectPath="/my/project", language="java")
+```
+
+### Other MCP-compatible tools (Cursor, Windsurf, OpenCode)
+
+Point the tool's MCP server configuration at `http://localhost:8765/mcp`. The server implements
+the MCP JSON-RPC 2.0 protocol with `initialize`, `tools/list`, and `tools/call` support.
+
+### Global standards without any config file
+
+For tools that don't support MCP, pull standards via REST:
+
+```bash
+# Print standards to terminal
+curl "http://localhost:15550/api/standards?projectPath=$(pwd)&language=java"
+
+# Save as a local file (optional — only when a static file is truly needed)
+curl -s "http://localhost:15550/api/standards?projectPath=$(pwd)&language=java" \
+  > .agent/STANDARDS.md
+```
+
+This endpoint returns the same content as `get_standards` but as plain Markdown.
+It always reflects the latest state of the knowledge base — no staleness.
+
+---
+
+## Auto-Capture: Patterns from Sessions and File Changes
+
+### 1. Git hook (file changes → patterns)
+
+Automatically extracts patterns after every commit in any project:
+
+```bash
+# Install in the current repo
+PATTERNFORGE_DIR="/path/to/pattern-forge"
+bash "$PATTERNFORGE_DIR/scripts/install-hooks.sh"
+
+# Install globally (every new git repo)
+bash "$PATTERNFORGE_DIR/scripts/install-hooks.sh" --global
+```
+
+### 2. Claude Code hook (session edits → patterns)
+
+Auto-captures patterns as Claude Code edits files:
+
+```bash
+# Install the PostToolUse hook
+bash "$PATTERNFORGE_DIR/scripts/install-hooks.sh" --claude-code
+```
+
+This adds a `PostToolUse` hook to `~/.claude/settings.json` that calls PatternForge after
+every `Edit`/`Write`/`MultiEdit` tool use. Captured patterns have source `agent_observation`
+and promote automatically when reinforced.
+
+### 3. Manual capture from conversation
+
+When the user says "always do X" or you correct an approach, capture it immediately:
+
+```bash
+curl -s -X POST http://localhost:15550/api/patterns/capture \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Always use @RequiredArgsConstructor instead of @Autowired",
+    "source": "user_explicit",
+    "projectPath": "/path/to/project",
+    "codeExample": "@RequiredArgsConstructor\npublic class MyService { private final Dep dep; }",
+    "rationale": "Constructor injection is testable and immutable"
+  }'
+```
+
+Or via MCP tool: `capture_pattern(description="...", source="user_explicit", projectPath="...")`
+
+### Auto-promotion pipeline
+
+```
+agent_observation (1 capture)
+  → user reinforces 3+ times
+  → is_project_standard = true  (appears in all project queries)
+  → used in 3+ projects with high success
+  → is_global_standard = true   (appears for all projects)
+```
+
+---
+
+## Global Workflows Without Copy-Paste
+
+Place `.md` workflow files in `~/.patternforge/workflows/` to define workflows that apply
+to ALL projects automatically. PatternForge checks this directory for every query before
+falling back to generated workflows.
+
+```
+~/.patternforge/
+  workflows/
+    implement_feature.md    ← always applied when task = implement_feature
+    fix_bug.md
+    add_endpoint.md
+```
+
+Workflow resolution order (first match wins):
+1. `{projectPath}/.opencode/workflows/{taskType}.md`
+2. `{projectPath}/.claude/workflows/{taskType}.md`
+3. `{projectPath}/.agent/workflows/{taskType}.md`
+4. `~/.config/opencode/workflows/{taskType}.md`
+5. `~/.claude/workflows/{taskType}.md`
+6. **`~/.patternforge/workflows/{taskType}.md`** ← new universal location
+7. `patternforge:generated` — built from patterns
 
 ---
 
@@ -324,19 +474,23 @@ Tables: `patterns`, `workflow_steps`, `workflow_templates`, `rules`, `projects`,
 
 ---
 
-## Current State (v1.1.0)
+## Current State (v1.2.0)
 
 | Feature | Status |
 |---------|--------|
 | REST API on port 15550 | Running |
-| MCP server on port 8765 | Running |
+| MCP server on port 8765 (JSON-RPC 2.0) | Running — compatible with Claude Code, Cursor, Windsurf |
+| MCP tools | `query_patterns`, `capture_pattern`, `get_standards`, `record_usage` |
+| `/api/standards` — dynamic standards doc | Running — replaces copy-pasted AGENTS.md |
 | Patterns in DB | ~62 (keyword search) |
 | Semantic / vector search | Needs Ollama (falls back to keyword) |
 | LLM extraction via Anthropic | Working (needs `ANTHROPIC_API_KEY`) |
-| Workflow resolution (multi-dir) | Working |
+| Workflow resolution (multi-dir) | Working — includes `~/.patternforge/workflows/` |
 | Git hook auto-recording | Available via `scripts/install-hooks.sh` |
+| Claude Code PostToolUse hook | Available via `scripts/install-hooks.sh --claude-code` |
+| Pattern capture from sessions | Working via `/api/patterns/capture` and `capture_pattern` MCP tool |
 | Pattern promotion (conversational → global) | Not yet implemented (Phase 3) |
-| Success tracking analytics | Not yet implemented (Phase 3) |
+| Success tracking analytics | Partial — usage recording working, promotion not yet |
 | Ollama embeddings | Blocked (firewall) — keyword fallback active |
 
 ---
