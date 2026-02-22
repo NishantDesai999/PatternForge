@@ -2,17 +2,7 @@ package com.patternforge.api.rest;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.patternforge.api.dto.ApiErrorResponse;
-import com.patternforge.api.dto.EmbeddingGenerationResponse;
-import com.patternforge.api.dto.PatternDto;
-import com.patternforge.api.dto.PatternExtractionRequest;
-import com.patternforge.api.dto.PatternExtractionResponse;
-import com.patternforge.api.dto.PatternQueryRequest;
-import com.patternforge.api.dto.PatternQueryResponse;
-import com.patternforge.api.dto.PatternUsageRequest;
-import com.patternforge.api.dto.PatternUsageResponse;
-import com.patternforge.api.dto.PromotionResponse;
-import com.patternforge.api.dto.QueryMetadata;
+import com.patternforge.api.dto.*;
 import com.patternforge.extraction.EmbeddingService;
 import com.patternforge.jooq.tables.records.PatternsRecord;
 import com.patternforge.llm.AnthropicApiException;
@@ -29,17 +19,9 @@ import com.patternforge.workflow.model.WorkflowResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * REST controller for pattern queries and retrieval.

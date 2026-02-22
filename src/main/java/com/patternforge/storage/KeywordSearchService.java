@@ -71,9 +71,9 @@ public class KeywordSearchService {
         
         log.debug("Found {} patterns matching query '{}'", results.size(), query);
         
-        // Fallback: return all patterns if no results found (MVP testing)
+        // Fallback: return limited patterns if no results found
         if (results.isEmpty()) {
-            log.warn("No patterns matched query '{}', returning all patterns as fallback", query);
+            log.warn("No patterns matched query '{}', returning limited patterns as fallback", query);
             results = dsl.select(
                     PATTERNS.PATTERN_ID,
                     PATTERNS.PATTERN_NAME,
@@ -84,7 +84,7 @@ public class KeywordSearchService {
                     PATTERNS.CODE_EXAMPLES,
                     PATTERNS.SUCCESS_RATE,
                     PATTERNS.WORKFLOW_ID,
-                    DSL.val(0.3).as("rank") // Lower relevance for fallback results
+                    DSL.val(0.3).as("rank")
                 )
                 .from(PATTERNS)
                 .where(buildFilters(context))
