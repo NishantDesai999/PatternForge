@@ -3,6 +3,8 @@ package com.patternforge.mcp;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.patternforge.api.dto.PatternQueryRequest;
+import com.patternforge.api.dto.PatternQueryResponse;
 import com.patternforge.api.rest.PatternController;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -16,7 +18,6 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -216,9 +217,9 @@ public class PatternForgeMcpServer {
 
             if ("POST".equals(exchange.getRequestMethod())) {
                 String body = new String(exchange.getRequestBody().readAllBytes());
-                Map<String, Object> request = objectMapper.readValue(body, Map.class);
+                PatternQueryRequest request = objectMapper.readValue(body, PatternQueryRequest.class);
 
-                ResponseEntity<Map<String, Object>> response = patternController.queryPatterns(request);
+                ResponseEntity<PatternQueryResponse> response = patternController.queryPatterns(request);
 
                 byte[] responseBytes = objectMapper.writeValueAsBytes(response.getBody());
                 exchange.getResponseHeaders().set("Content-Type", "application/json");

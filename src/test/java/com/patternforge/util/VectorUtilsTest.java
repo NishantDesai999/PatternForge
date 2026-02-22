@@ -109,7 +109,7 @@ class VectorUtilsTest {
     }
 
     @Test
-    void shouldHandleNegativeValues() {
+    void shouldParseNegativeValues() {
         float[] result = VectorUtils.fromPostgresVector("[-0.5,-1.0,0.75]");
         assertThat(result).hasSize(3);
         assertThat(result[0]).isCloseTo(-0.5f, within(0.001f));
