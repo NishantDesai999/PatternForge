@@ -70,6 +70,13 @@ public class PatternRepository {
             .where(PATTERNS.IS_GLOBAL_STANDARD.isTrue())
             .fetch();
     }
+
+    public List<PatternsRecord> findProjectStandardsNotGlobal() {
+        return dsl.selectFrom(PATTERNS)
+            .where(PATTERNS.IS_PROJECT_STANDARD.isTrue())
+            .and(PATTERNS.IS_GLOBAL_STANDARD.isFalse())
+            .fetch();
+    }
     
     public PatternsRecord save(PatternsRecord record) {
         if (Objects.nonNull(record.getPatternId())) {

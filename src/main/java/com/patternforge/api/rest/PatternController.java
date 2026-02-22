@@ -72,7 +72,7 @@ public class PatternController {
         String language = (String) request.get("language");
         String projectPath = (String) request.get("projectPath");
         String conversationId = (String) request.get("conversationId");
-        Integer topK = Objects.nonNull(request.get("topK")) ? (Integer) request.get("topK") : 7;
+        Integer topK = Objects.nonNull(request.get("topK")) ? (Integer) request.get("topK") : 10;
         
         log.info("Querying patterns - task: {}, language: {}, projectPath: {}, conversationId: {}, topK: {}", 
             task, language, projectPath, conversationId, topK);
@@ -261,15 +261,20 @@ public class PatternController {
     
     @PostMapping("/admin/promote-patterns")
     public ResponseEntity<Map<String, Object>> promotePatterns() {
-        log.info("Running pattern promotion check");
-        
+        log.info("Running pattern promotion check (conversational→project→global)");
+
         try {
-            int promotedCount = patternPromotionService.checkAndPromotePatterns();
-            
+            int toProjectCount = patternPromotionService.checkAndPromotePatterns();
+            int toGlobalCount = patternPromotionService.checkAndPromoteToGlobal();
+
             return ResponseEntity.ok(Map.of(
                 "status", "success",
-                "promoted_count", promotedCount,
-                "message", String.format("Promoted %d patterns to project standard", promotedCount)
+                "promoted_to_project", toProjectCount,
+                "promoted_to_global", toGlobalCount,
+                "total_promoted", toProjectCount + toGlobalCount,
+                "message", String.format(
+                    "Promoted %d pattern(s) to project standard, %d to global standard",
+                    toProjectCount, toGlobalCount)
             ));
         } catch (Exception exception) {
             log.error("Failed to promote patterns", exception);

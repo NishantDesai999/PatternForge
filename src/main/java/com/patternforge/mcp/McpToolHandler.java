@@ -189,7 +189,7 @@ public class McpToolHandler {
             request.put("projectPath", args.get("projectPath").asText());
         }
         if (args.has("topK")) {
-            request.put("topK", args.get("topK").asInt(7));
+            request.put("topK", args.get("topK").asInt(10));
         }
         if (args.has("conversationId")) {
             request.put("conversationId", args.get("conversationId").asText());
