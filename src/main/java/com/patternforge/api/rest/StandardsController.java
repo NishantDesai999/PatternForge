@@ -19,7 +19,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * Generates a dynamic, always-current standards document from the PatternForge knowledge base.
@@ -220,18 +219,18 @@ public class StandardsController {
             // Code example for this language
             if (Objects.nonNull(pattern.getCodeExamples())) {
                 try {
-                    Map<String, Object> examples = objectMapper.readValue(
+                    Map<String, String> examples = objectMapper.readValue(
                         pattern.getCodeExamples().data(),
-                        new TypeReference<Map<String, Object>>() {}
+                        new TypeReference<Map<String, String>>() {}
                     );
-                    Object example = examples.get(language);
+                    String example = examples.get(language);
                     if (Objects.isNull(example)) {
                         // Try first available language
                         example = examples.values().stream().findFirst().orElse(null);
                     }
                     if (Objects.nonNull(example)) {
                         doc.append("```").append(language).append("\n");
-                        doc.append(example.toString().trim()).append("\n");
+                        doc.append(example.trim()).append("\n");
                         doc.append("```\n\n");
                     }
                 } catch (Exception exception) {

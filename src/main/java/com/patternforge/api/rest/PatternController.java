@@ -2,13 +2,22 @@ package com.patternforge.api.rest;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.patternforge.api.dto.ApiErrorResponse;
+import com.patternforge.api.dto.EmbeddingGenerationResponse;
 import com.patternforge.api.dto.PatternDto;
 import com.patternforge.api.dto.PatternExtractionRequest;
+import com.patternforge.api.dto.PatternExtractionResponse;
+import com.patternforge.api.dto.PatternQueryRequest;
+import com.patternforge.api.dto.PatternQueryResponse;
 import com.patternforge.api.dto.PatternUsageRequest;
+import com.patternforge.api.dto.PatternUsageResponse;
+import com.patternforge.api.dto.PromotionResponse;
+import com.patternforge.api.dto.QueryMetadata;
 import com.patternforge.extraction.EmbeddingService;
 import com.patternforge.jooq.tables.records.PatternsRecord;
 import com.patternforge.llm.AnthropicApiException;
 import com.patternforge.llm.PatternExtractionService;
+import com.patternforge.promotion.PatternPromotionService;
 import com.patternforge.retrieval.PatternRetriever;
 import com.patternforge.retrieval.TaskAnalyzer;
 import com.patternforge.retrieval.model.RetrievedPattern;
@@ -40,156 +49,128 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class PatternController {
-    
+
     private final PatternRepository patternRepository;
     private final TaskAnalyzer taskAnalyzer;
     private final PatternRetriever patternRetriever;
     private final WorkflowResolver workflowResolver;
     private final EmbeddingService embeddingService;
     private final PatternUsageService patternUsageService;
-    private final com.patternforge.promotion.PatternPromotionService patternPromotionService;
+    private final PatternPromotionService patternPromotionService;
     private final PatternExtractionService patternExtractionService;
     private final ObjectMapper objectMapper;
-    
+
     @GetMapping("/health")
     public ResponseEntity<String> health() {
         return ResponseEntity.ok("PatternForge API is running");
     }
-    
+
     @GetMapping
     public ResponseEntity<List<PatternDto>> getAllPatterns() {
         log.info("Fetching all patterns");
-        List<PatternsRecord> patterns = patternRepository.findAll();
-        List<PatternDto> dtos = patterns.stream()
+        List<PatternDto> dtos = patternRepository.findAll().stream()
             .map(this::toDto)
             .toList();
         return ResponseEntity.ok(dtos);
     }
-    
+
     @PostMapping("/query")
-    public ResponseEntity<Map<String, Object>> queryPatterns(@RequestBody Map<String, Object> request) {
-        String task = (String) request.get("task");
-        String language = (String) request.get("language");
-        String projectPath = (String) request.get("projectPath");
-        String conversationId = (String) request.get("conversationId");
-        Integer topK = Objects.nonNull(request.get("topK")) ? (Integer) request.get("topK") : 10;
-        
-        log.info("Querying patterns - task: {}, language: {}, projectPath: {}, conversationId: {}, topK: {}", 
-            task, language, projectPath, conversationId, topK);
-        
-        // 1. Analyze task
-        TaskContext taskContext = taskAnalyzer.analyze(task, language, null);
-        
-        // 2. Retrieve patterns (including project-specific and conversational patterns)
-        List<RetrievedPattern> patterns = patternRetriever.retrieve(taskContext, topK, projectPath, conversationId);
-        
-        // 3. Resolve workflow
+    public ResponseEntity<PatternQueryResponse> queryPatterns(@RequestBody PatternQueryRequest request) {
+        int topK = Objects.nonNull(request.topK()) ? request.topK() : 10;
+
+        log.info("Querying patterns - task: {}, language: {}, projectPath: {}, conversationId: {}, topK: {}",
+            request.task(), request.language(), request.projectPath(), request.conversationId(), topK);
+
+        TaskContext taskContext = taskAnalyzer.analyze(request.task(), request.language(), null);
+
+        List<RetrievedPattern> patterns = patternRetriever.retrieve(
+            taskContext, topK, request.projectPath(), request.conversationId());
+
         WorkflowResponse workflow = workflowResolver.resolveWorkflow(
+            taskContext.getTaskType(), request.task(), request.projectPath(), patterns);
+
+        QueryMetadata metadata = new QueryMetadata(
+            patterns.size(),
             taskContext.getTaskType(),
-            task,
-            projectPath,
-            patterns
-        );
-        
-        // 4. Build response
-        return ResponseEntity.ok(Map.of(
-            "patterns", patterns,
-            "workflow", workflow,
-            "metadata", Map.of(
-                "patterns_retrieved", patterns.size(),
-                "task_type", taskContext.getTaskType(),
-                "search_strategy", embeddingService.isAvailable() ? "semantic" : "keyword"
-            )
-        ));
+            embeddingService.isAvailable() ? "semantic" : "keyword");
+
+        return ResponseEntity.ok(new PatternQueryResponse(patterns, workflow, metadata));
     }
-    
+
     @PostMapping("/usage")
-    public ResponseEntity<Map<String, Object>> recordPatternUsage(@RequestBody PatternUsageRequest request) {
-        log.info("Recording pattern usage: patternId={}, projectPath={}, taskType={}, success={}", 
+    public ResponseEntity<?> recordPatternUsage(@RequestBody PatternUsageRequest request) {
+        log.info("Recording pattern usage: patternId={}, projectPath={}, taskType={}, success={}",
             request.getPatternId(), request.getProjectPath(), request.getTaskType(), request.getSuccess());
-        
+
         try {
             UUID usageId = patternUsageService.recordUsage(request);
             Double successRate = patternUsageService.calculateSuccessRate(request.getPatternId());
-            
-            return ResponseEntity.ok(Map.of(
-                "status", "success",
-                "usage_id", usageId.toString(),
-                "success_rate", Objects.nonNull(successRate) ? successRate : 0.0,
-                "message", "Pattern usage recorded successfully"
-            ));
+
+            return ResponseEntity.ok(new PatternUsageResponse(
+                "success",
+                usageId.toString(),
+                Objects.nonNull(successRate) ? successRate : 0.0,
+                "Pattern usage recorded successfully"));
+
         } catch (IllegalArgumentException illegalArgumentException) {
             log.warn("Invalid pattern usage request: {}", illegalArgumentException.getMessage());
-            return ResponseEntity.badRequest().body(Map.of(
-                "status", "error",
-                "message", illegalArgumentException.getMessage()
-            ));
+            return ResponseEntity.badRequest().body(ApiErrorResponse.of(illegalArgumentException.getMessage()));
         } catch (Exception exception) {
             log.error("Error recording pattern usage", exception);
-            return ResponseEntity.internalServerError().body(Map.of(
-                "status", "error",
-                "message", "Internal server error: " + exception.getMessage()
-            ));
+            return ResponseEntity.internalServerError()
+                .body(ApiErrorResponse.of("Internal server error: " + exception.getMessage()));
         }
     }
-    
+
     @PostMapping("/extract")
-    public ResponseEntity<Map<String, Object>> extractPatterns(@RequestBody PatternExtractionRequest request) {
+    public ResponseEntity<?> extractPatterns(@RequestBody PatternExtractionRequest request) {
         log.info("Extracting patterns from file={}", request.getFilePath());
 
         try {
             List<PatternDto> extracted = patternExtractionService.extract(request);
-            return ResponseEntity.ok(Map.of(
-                "status", "success",
-                "patterns_extracted", extracted.size(),
-                "patterns", extracted,
-                "source_file", Objects.requireNonNullElse(request.getFilePath(), "")
-            ));
+            return ResponseEntity.ok(new PatternExtractionResponse(
+                "success",
+                extracted.size(),
+                extracted,
+                Objects.requireNonNullElse(request.getFilePath(), "")));
+
         } catch (IllegalArgumentException illegalArgumentException) {
             log.warn("Invalid extraction request: {}", illegalArgumentException.getMessage());
-            return ResponseEntity.badRequest().body(Map.of(
-                "status", "error",
-                "message", illegalArgumentException.getMessage()
-            ));
+            return ResponseEntity.badRequest().body(ApiErrorResponse.of(illegalArgumentException.getMessage()));
         } catch (AnthropicApiException anthropicApiException) {
             log.error("LLM extraction failed", anthropicApiException);
-            return ResponseEntity.internalServerError().body(Map.of(
-                "status", "error",
-                "message", "LLM extraction failed: " + anthropicApiException.getMessage()
-            ));
+            return ResponseEntity.internalServerError()
+                .body(ApiErrorResponse.of("LLM extraction failed: " + anthropicApiException.getMessage()));
         } catch (Exception exception) {
             log.error("Unexpected error during pattern extraction", exception);
-            return ResponseEntity.internalServerError().body(Map.of(
-                "status", "error",
-                "message", "Internal server error: " + exception.getMessage()
-            ));
+            return ResponseEntity.internalServerError()
+                .body(ApiErrorResponse.of("Internal server error: " + exception.getMessage()));
         }
     }
 
     @PostMapping("/admin/generate-embeddings")
-    public ResponseEntity<Map<String, Object>> generateEmbeddings() {
+    public ResponseEntity<EmbeddingGenerationResponse> generateEmbeddings() {
         log.info("Generating embeddings for all patterns");
-        
+
         if (!embeddingService.isAvailable()) {
-            return ResponseEntity.ok(Map.of(
-                "status", "error",
-                "message", "Ollama embedding service is not available"
-            ));
+            return ResponseEntity.ok(new EmbeddingGenerationResponse(
+                "error", 0, 0, 0, "Ollama embedding service is not available"));
         }
-        
+
         List<PatternsRecord> patterns = patternRepository.findAll();
         int successCount = 0;
         int failureCount = 0;
-        
+
         for (PatternsRecord pattern : patterns) {
             try {
                 String embeddingText = buildEmbeddingText(pattern);
                 float[] embedding = embeddingService.generateEmbedding(embeddingText);
-                
+
                 if (Objects.nonNull(embedding)) {
                     patternRepository.updateEmbedding(pattern.getPatternId(), embedding);
                     successCount++;
-                    log.info("Generated embedding for pattern: {} ({})", pattern.getPatternName(), pattern.getPatternId());
+                    log.info("Generated embedding for pattern: {} ({})",
+                        pattern.getPatternName(), pattern.getPatternId());
                 } else {
                     failureCount++;
                     log.warn("Failed to generate embedding for pattern: {}", pattern.getPatternId());
@@ -199,50 +180,75 @@ public class PatternController {
                 log.error("Error generating embedding for pattern: {}", pattern.getPatternId(), exception);
             }
         }
-        
-        return ResponseEntity.ok(Map.of(
-            "status", "success",
-            "total_patterns", patterns.size(),
-            "success_count", successCount,
-            "failure_count", failureCount,
-            "message", String.format("Generated %d embeddings successfully, %d failures", successCount, failureCount)
-        ));
+
+        return ResponseEntity.ok(new EmbeddingGenerationResponse(
+            "success",
+            patterns.size(),
+            successCount,
+            failureCount,
+            String.format("Generated %d embeddings successfully, %d failures", successCount, failureCount)));
     }
-    
+
+    @PostMapping("/admin/promote-patterns")
+    public ResponseEntity<PromotionResponse> promotePatterns() {
+        log.info("Running pattern promotion check (conversational→project→global)");
+
+        try {
+            int toProjectCount = patternPromotionService.checkAndPromotePatterns();
+            int toGlobalCount = patternPromotionService.checkAndPromoteToGlobal();
+
+            return ResponseEntity.ok(new PromotionResponse(
+                "success",
+                toProjectCount,
+                toGlobalCount,
+                toProjectCount + toGlobalCount,
+                String.format("Promoted %d pattern(s) to project standard, %d to global standard",
+                    toProjectCount, toGlobalCount)));
+
+        } catch (Exception exception) {
+            log.error("Failed to promote patterns", exception);
+            return ResponseEntity.internalServerError().body(new PromotionResponse(
+                "error", 0, 0, 0, "Failed to promote patterns: " + exception.getMessage()));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────
+
     private String buildEmbeddingText(PatternsRecord pattern) {
         StringBuilder embeddingText = new StringBuilder();
         embeddingText.append("Title: ").append(pattern.getTitle()).append("\n");
         embeddingText.append("Description: ").append(pattern.getDescription()).append("\n");
-        
+
         if (Objects.nonNull(pattern.getWhenToUse())) {
             embeddingText.append("When to use: ").append(pattern.getWhenToUse()).append("\n");
         }
-        
+
         if (Objects.nonNull(pattern.getCategory())) {
             embeddingText.append("Category: ").append(pattern.getCategory()).append("\n");
         }
-        
+
         return embeddingText.toString();
     }
-    
-    private PatternDto toDto(PatternsRecord record) {
-        Map<String, Object> codeExamples = null;
+
+    PatternDto toDto(PatternsRecord record) {
+        Map<String, String> codeExamples = null;
         if (Objects.nonNull(record.getCodeExamples())) {
             try {
                 codeExamples = objectMapper.readValue(
                     record.getCodeExamples().data(),
-                    new TypeReference<Map<String, Object>>() {}
-                );
+                    new TypeReference<Map<String, String>>() {});
             } catch (Exception exception) {
                 log.warn("Failed to parse code examples for pattern: {}", record.getPatternId(), exception);
             }
         }
-        
+
         List<String> languages = null;
         if (Objects.nonNull(record.getLanguages())) {
             languages = Arrays.asList(record.getLanguages());
         }
-        
+
         return PatternDto.builder()
             .patternId(record.getPatternId())
             .patternName(record.getPatternName())
@@ -257,31 +263,5 @@ public class PatternController {
             .usageCount(record.getUsageCount())
             .isGlobalStandard(record.getIsGlobalStandard())
             .build();
-    }
-    
-    @PostMapping("/admin/promote-patterns")
-    public ResponseEntity<Map<String, Object>> promotePatterns() {
-        log.info("Running pattern promotion check (conversational→project→global)");
-
-        try {
-            int toProjectCount = patternPromotionService.checkAndPromotePatterns();
-            int toGlobalCount = patternPromotionService.checkAndPromoteToGlobal();
-
-            return ResponseEntity.ok(Map.of(
-                "status", "success",
-                "promoted_to_project", toProjectCount,
-                "promoted_to_global", toGlobalCount,
-                "total_promoted", toProjectCount + toGlobalCount,
-                "message", String.format(
-                    "Promoted %d pattern(s) to project standard, %d to global standard",
-                    toProjectCount, toGlobalCount)
-            ));
-        } catch (Exception exception) {
-            log.error("Failed to promote patterns", exception);
-            return ResponseEntity.ok(Map.of(
-                "status", "error",
-                "message", "Failed to promote patterns: " + exception.getMessage()
-            ));
-        }
     }
 }

@@ -23,7 +23,7 @@ public class PatternDto {
     private String scope;
     private List<String> languages;
     private String whenToUse;
-    private Map<String, Object> codeExamples;
+    private Map<String, String> codeExamples;
     private Double successRate;
     private Integer usageCount;
     private Boolean isGlobalStandard;

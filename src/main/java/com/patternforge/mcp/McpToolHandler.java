@@ -5,7 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.patternforge.api.dto.PatternCaptureRequest;
+import com.patternforge.api.dto.PatternCaptureResponse;
+import com.patternforge.api.dto.PatternQueryRequest;
+import com.patternforge.api.dto.PatternQueryResponse;
 import com.patternforge.api.dto.PatternUsageRequest;
+import com.patternforge.api.dto.PatternUsageResponse;
 import com.patternforge.api.rest.PatternCaptureController;
 import com.patternforge.api.rest.PatternController;
 import com.patternforge.api.rest.StandardsController;
@@ -14,15 +18,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
 /**
  * Handles MCP tool calls by delegating to existing REST controllers.
- * Translates MCP tool arguments into controller requests and formats responses
- * as MCP content blocks.
+ * Translates MCP tool arguments into typed request DTOs and formats
+ * typed response DTOs as MCP content blocks.
  */
 @Component
 @RequiredArgsConstructor
@@ -44,10 +47,10 @@ public class McpToolHandler {
     public JsonNode callTool(String toolName, JsonNode arguments) {
         try {
             return switch (toolName) {
-                case "query_patterns" -> handleQueryPatterns(arguments);
+                case "query_patterns"  -> handleQueryPatterns(arguments);
                 case "capture_pattern" -> handleCapturePattern(arguments);
-                case "get_standards" -> handleGetStandards(arguments);
-                case "record_usage" -> handleRecordUsage(arguments);
+                case "get_standards"   -> handleGetStandards(arguments);
+                case "record_usage"    -> handleRecordUsage(arguments);
                 default -> errorContent("Unknown tool: " + toolName);
             };
         } catch (Exception exception) {
@@ -69,26 +72,11 @@ public class McpToolHandler {
                 + "Call this at the start of any coding task to get the patterns and workflow you should follow. "
                 + "Returns patterns with code examples plus a workflow with ordered steps.",
             Map.of(
-                "task", Map.of(
-                    "type", "string",
-                    "description", "Plain-English description of what you are doing. Be specific."
-                ),
-                "language", Map.of(
-                    "type", "string",
-                    "description", "Programming language (java, python, typescript, go, etc.)"
-                ),
-                "projectPath", Map.of(
-                    "type", "string",
-                    "description", "Absolute path to the project root. Include this for project-specific patterns."
-                ),
-                "topK", Map.of(
-                    "type", "integer",
-                    "description", "Number of patterns to return. Default 5. Use 3 for simple tasks, 7-10 for complex."
-                ),
-                "conversationId", Map.of(
-                    "type", "string",
-                    "description", "Optional session ID to link queries across a session for analytics."
-                )
+                "task",           new ToolParameter("string",  "Plain-English description of what you are doing. Be specific."),
+                "language",       new ToolParameter("string",  "Programming language (java, python, typescript, go, etc.)"),
+                "projectPath",    new ToolParameter("string",  "Absolute path to the project root. Include this for project-specific patterns."),
+                "topK",           new ToolParameter("integer", "Number of patterns to return. Default 10. Use 5 for simple tasks, 15 for complex."),
+                "conversationId", new ToolParameter("string",  "Optional session ID to link queries across a session for analytics.")
             ),
             new String[]{"task", "language"}
         ));
@@ -101,30 +89,12 @@ public class McpToolHandler {
                 + "(3) you observed a recurring pattern worth storing. "
                 + "Captured patterns auto-promote to project standards when reinforced 3+ times.",
             Map.of(
-                "description", Map.of(
-                    "type", "string",
-                    "description", "Clear description of the pattern or standard to capture"
-                ),
-                "source", Map.of(
-                    "type", "string",
-                    "description", "Where the pattern came from: user_explicit, user_correction, or agent_observation"
-                ),
-                "projectPath", Map.of(
-                    "type", "string",
-                    "description", "Absolute path to the project root"
-                ),
-                "codeExample", Map.of(
-                    "type", "string",
-                    "description", "Optional code example demonstrating the pattern"
-                ),
-                "rationale", Map.of(
-                    "type", "string",
-                    "description", "Why this pattern should be followed"
-                ),
-                "conversationId", Map.of(
-                    "type", "string",
-                    "description", "Session ID to group patterns from the same conversation"
-                )
+                "description",   new ToolParameter("string", "Clear description of the pattern or standard to capture"),
+                "source",        new ToolParameter("string", "Where the pattern came from: user_explicit, user_correction, or agent_observation"),
+                "projectPath",   new ToolParameter("string", "Absolute path to the project root"),
+                "codeExample",   new ToolParameter("string", "Optional code example demonstrating the pattern"),
+                "rationale",     new ToolParameter("string", "Why this pattern should be followed"),
+                "conversationId",new ToolParameter("string", "Session ID to group patterns from the same conversation")
             ),
             new String[]{"description", "source", "projectPath"}
         ));
@@ -136,14 +106,8 @@ public class McpToolHandler {
                 + "information dynamically, always current. Returns global standards plus project-specific "
                 + "patterns in a format ready to use as agent instructions.",
             Map.of(
-                "projectPath", Map.of(
-                    "type", "string",
-                    "description", "Absolute path to the project root"
-                ),
-                "language", Map.of(
-                    "type", "string",
-                    "description", "Primary language of the project (java, python, typescript, go, etc.)"
-                )
+                "projectPath", new ToolParameter("string", "Absolute path to the project root"),
+                "language",    new ToolParameter("string", "Primary language of the project (java, python, typescript, go, etc.)")
             ),
             new String[]{"projectPath", "language"}
         ));
@@ -154,22 +118,10 @@ public class McpToolHandler {
                 + "Call this after completing a task to help PatternForge learn which patterns work. "
                 + "Successful patterns get higher relevance scores; failed ones get lower scores.",
             Map.of(
-                "patternId", Map.of(
-                    "type", "string",
-                    "description", "UUID of the pattern that was used"
-                ),
-                "projectPath", Map.of(
-                    "type", "string",
-                    "description", "Absolute path to the project root"
-                ),
-                "taskType", Map.of(
-                    "type", "string",
-                    "description", "Type of task: fix_bug, add_endpoint, implement_feature, etc."
-                ),
-                "success", Map.of(
-                    "type", "boolean",
-                    "description", "Whether the pattern was applied successfully"
-                )
+                "patternId",   new ToolParameter("string",  "UUID of the pattern that was used"),
+                "projectPath", new ToolParameter("string",  "Absolute path to the project root"),
+                "taskType",    new ToolParameter("string",  "Type of task: fix_bug, add_endpoint, implement_feature, etc."),
+                "success",     new ToolParameter("boolean", "Whether the pattern was applied successfully")
             ),
             new String[]{"patternId", "projectPath", "success"}
         ));
@@ -182,20 +134,14 @@ public class McpToolHandler {
     // ─────────────────────────────────────────────────────────────
 
     private JsonNode handleQueryPatterns(JsonNode args) throws Exception {
-        Map<String, Object> request = new HashMap<>();
-        request.put("task", getStringArg(args, "task"));
-        request.put("language", getStringArg(args, "language"));
-        if (args.has("projectPath")) {
-            request.put("projectPath", args.get("projectPath").asText());
-        }
-        if (args.has("topK")) {
-            request.put("topK", args.get("topK").asInt(10));
-        }
-        if (args.has("conversationId")) {
-            request.put("conversationId", args.get("conversationId").asText());
-        }
+        PatternQueryRequest request = new PatternQueryRequest(
+            getStringArg(args, "task"),
+            getStringArg(args, "language"),
+            getStringArg(args, "projectPath"),
+            getStringArg(args, "conversationId"),
+            args.has("topK") ? args.get("topK").asInt(10) : null);
 
-        ResponseEntity<Map<String, Object>> response = patternController.queryPatterns(request);
+        ResponseEntity<PatternQueryResponse> response = patternController.queryPatterns(request);
         String json = objectMapper.writeValueAsString(response.getBody());
         return textContent(json);
     }
@@ -206,32 +152,21 @@ public class McpToolHandler {
         request.setSource(getStringArg(args, "source"));
         request.setProjectPath(getStringArg(args, "projectPath"));
 
-        if (args.has("codeExample")) {
-            request.setCodeExample(args.get("codeExample").asText());
-        }
-        if (args.has("rationale")) {
-            request.setRationale(args.get("rationale").asText());
-        }
-        if (args.has("conversationId")) {
-            request.setConversationId(args.get("conversationId").asText());
-        }
+        if (args.has("codeExample"))    request.setCodeExample(args.get("codeExample").asText());
+        if (args.has("rationale"))      request.setRationale(args.get("rationale").asText());
+        if (args.has("conversationId")) request.setConversationId(args.get("conversationId").asText());
 
-        ResponseEntity<Map<String, Object>> response = patternCaptureController.capturePattern(request);
-        String message = Objects.nonNull(response.getBody())
-            ? response.getBody().getOrDefault("message", "Pattern captured").toString()
-            : "Pattern captured";
-        String patternId = Objects.nonNull(response.getBody())
-            ? response.getBody().getOrDefault("pattern_id", "").toString()
-            : "";
-
-        return textContent("Pattern captured successfully. ID: " + patternId + " — " + message);
+        ResponseEntity<?> response = patternCaptureController.capturePattern(request);
+        if (response.getBody() instanceof PatternCaptureResponse captured) {
+            return textContent("Pattern captured successfully. ID: " + captured.patternId() + " — " + captured.message());
+        }
+        return textContent("Pattern captured successfully.");
     }
 
     private JsonNode handleGetStandards(JsonNode args) {
-        String projectPath = getStringArg(args, "projectPath");
-        String language = getStringArg(args, "language");
-
-        ResponseEntity<String> response = standardsController.generateStandards(projectPath, language);
+        ResponseEntity<String> response = standardsController.generateStandards(
+            getStringArg(args, "projectPath"),
+            getStringArg(args, "language"));
         String body = Objects.nonNull(response.getBody()) ? response.getBody() : "No standards available.";
         return textContent(body);
     }
@@ -248,9 +183,9 @@ public class McpToolHandler {
             request.setTaskType(args.get("taskType").asText());
         }
 
-        ResponseEntity<Map<String, Object>> response = patternController.recordPatternUsage(request);
-        String status = Objects.nonNull(response.getBody())
-            ? response.getBody().getOrDefault("status", "success").toString()
+        ResponseEntity<?> response = patternController.recordPatternUsage(request);
+        String status = (response.getBody() instanceof PatternUsageResponse usage)
+            ? usage.status()
             : "success";
         return textContent("Usage recorded — status: " + status);
     }
@@ -288,7 +223,7 @@ public class McpToolHandler {
     private JsonNode buildToolDef(
             String name,
             String description,
-            Map<String, Object> properties,
+            Map<String, ToolParameter> properties,
             String[] required) {
 
         ObjectNode tool = objectMapper.createObjectNode();
@@ -299,12 +234,10 @@ public class McpToolHandler {
         inputSchema.put("type", "object");
 
         ObjectNode propsNode = objectMapper.createObjectNode();
-        for (Map.Entry<String, Object> entry : properties.entrySet()) {
-            @SuppressWarnings("unchecked")
-            Map<String, String> propDef = (Map<String, String>) entry.getValue();
+        for (Map.Entry<String, ToolParameter> entry : properties.entrySet()) {
             ObjectNode prop = objectMapper.createObjectNode();
-            prop.put("type", propDef.get("type"));
-            prop.put("description", propDef.get("description"));
+            prop.put("type", entry.getValue().type());
+            prop.put("description", entry.getValue().description());
             propsNode.set(entry.getKey(), prop);
         }
         inputSchema.set("properties", propsNode);
