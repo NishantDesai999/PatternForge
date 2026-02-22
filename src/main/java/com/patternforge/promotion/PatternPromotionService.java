@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.jooq.JSONB;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,56 +37,79 @@ public class PatternPromotionService {
     private final DSLContext dsl;
     
     /**
-     * Check and promote patterns that meet promotion criteria.
-     * Conversational patterns with promotion_count >= 5 and is_project_standard = false
-     * will be promoted to project standards.
+     * Runs the full promotion pipeline in one call:
+     * <ol>
+     *   <li>Conversational patterns with promotion_count &ge; 5 → project standard</li>
+     *   <li>Immediately tries global promotion for each newly promoted pattern</li>
+     *   <li>Scans all existing project standards and promotes any that now qualify as global</li>
+     * </ol>
      *
-     * @return count of promoted patterns
+     * @return total count of promotions across both levels
      */
     @Transactional
     public int checkAndPromotePatterns() {
-        List<ConversationalPatternsRecord> candidates = 
+        List<ConversationalPatternsRecord> candidates =
             conversationalPatternRepository.findPendingPromotion();
-        
-        int promotedCount = 0;
-        
+
+        int toProjectCount = 0;
+        int toGlobalCount = 0;
+
         for (ConversationalPatternsRecord conversational : candidates) {
             try {
                 UUID formalPatternId = conversational.getFormalPatternId();
-                
-                // Create formal pattern if it doesn't exist
+
+                // Create formal pattern if it doesn't exist yet
                 if (Objects.isNull(formalPatternId)) {
                     formalPatternId = createFormalPatternFromConversational(conversational);
-                    
-                    // Link conversational pattern to formal pattern
                     conversational.setFormalPatternId(formalPatternId);
                     conversational.store();
                 }
-                
-                // Promote conversational pattern to project standard
+
+                // Promote conversational → project standard
                 conversationalPatternRepository.promoteToProjectStandard(conversational.getId());
-                
-                // Log promotion to pattern_promotions table
-                logPromotion(
-                    formalPatternId,
-                    "system",
-                    "conversational",
-                    "project",
-                    "automatic",
-                    false
-                );
-                
-                promotedCount++;
-                log.info("Promoted pattern '{}' to project standard", 
-                    conversational.getDescription());
-                
+                logPromotion(formalPatternId, "system", "conversational", "project", "automatic", false);
+                toProjectCount++;
+                log.info("Promoted pattern '{}' to project standard", conversational.getDescription());
+
+                // Immediately try global promotion — this pattern may already be used in 3+ projects
+                if (promoteToGlobal(formalPatternId)) {
+                    toGlobalCount++;
+                }
+
             } catch (Exception exception) {
-                log.error("Failed to promote pattern {}: {}", 
+                log.error("Failed to promote pattern {}: {}",
                     conversational.getId(), exception.getMessage(), exception);
             }
         }
-        
-        log.info("Promoted {} patterns to project standard", promotedCount);
+
+        // Also scan all existing project standards — any that crossed the 3-project threshold
+        toGlobalCount += checkAndPromoteToGlobal();
+
+        log.info("Promotion run complete: {} conversational→project, {} project→global",
+            toProjectCount, toGlobalCount);
+        return toProjectCount + toGlobalCount;
+    }
+
+    /**
+     * Scans all project standards not yet marked global and promotes any that are
+     * used in 3 or more distinct projects.
+     *
+     * @return count of patterns promoted to global standard
+     */
+    @Transactional
+    public int checkAndPromoteToGlobal() {
+        List<PatternsRecord> candidates = patternRepository.findProjectStandardsNotGlobal();
+
+        int promotedCount = 0;
+        for (PatternsRecord pattern : candidates) {
+            if (promoteToGlobal(pattern.getPatternId())) {
+                promotedCount++;
+            }
+        }
+
+        if (promotedCount > 0) {
+            log.info("Promoted {} project standards to global standard", promotedCount);
+        }
         return promotedCount;
     }
     
@@ -109,15 +133,15 @@ public class PatternPromotionService {
             return false;
         }
         
-        // Check if pattern is used in multiple projects (3+ projects)
-        Integer projectCount = dsl.selectCount()
+        // Check if pattern is used in 3+ distinct projects (not just 3 usage records)
+        Integer distinctProjectCount = dsl.select(DSL.countDistinct(PATTERN_USAGE.PROJECT_ID))
             .from(PATTERN_USAGE)
             .where(PATTERN_USAGE.PATTERN_ID.eq(patternId))
             .fetchOne(0, Integer.class);
-        
-        if (Objects.isNull(projectCount) || projectCount < 3) {
-            log.warn("Pattern {} used in only {} projects, need 3+ for global promotion", 
-                patternId, projectCount);
+
+        if (Objects.isNull(distinctProjectCount) || distinctProjectCount < 3) {
+            log.debug("Pattern {} used in only {} distinct project(s), need 3+ for global promotion",
+                patternId, distinctProjectCount);
             return false;
         }
         

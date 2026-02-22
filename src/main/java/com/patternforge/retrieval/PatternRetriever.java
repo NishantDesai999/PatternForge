@@ -49,42 +49,50 @@ public class PatternRetriever {
     private final ObjectMapper objectMapper;
     
     /**
-     * Retrieves top-k most relevant patterns for given task context.
+     * Retrieves relevant patterns for given task context.
      * Automatically selects vector or keyword search based on embedding service availability.
      * Also includes project-specific and conversational patterns when applicable.
+     *
+     * <p>Global standards (is_global_standard = true) are always returned in full regardless
+     * of topK, so no cross-project mandatory standard is ever omitted. The topK limit applies
+     * only to the semantic/keyword search that surfaces additional task-specific patterns.
      *
      * @param taskContext The context describing the development task
      * @param topK Maximum number of patterns to retrieve from semantic/keyword search
      * @param projectPath Optional project path to include project-specific patterns
      * @param conversationId Optional conversation ID to include session patterns
-     * @return List of retrieved patterns ranked by relevance (may exceed topK if project patterns added)
+     * @return List of retrieved patterns ranked by relevance
      */
     public List<RetrievedPattern> retrieve(TaskContext taskContext, int topK, String projectPath, String conversationId) {
         if (Objects.isNull(taskContext)) {
             log.warn("TaskContext is null - returning empty results");
             return List.of();
         }
-        
-        // Step 1: Get global patterns using semantic/keyword search
-        List<RetrievedPattern> globalPatterns = retrieveGlobalPatterns(taskContext, topK);
-        log.debug("Retrieved {} global patterns", globalPatterns.size());
-        
-        // Step 2: Get project-specific patterns if projectPath provided
+
+        // Step 1: Always include ALL global standards — never subject to topK cap
+        List<RetrievedPattern> globalStandards = retrieveAllGlobalStandards();
+        log.debug("Retrieved {} global standard patterns (uncapped)", globalStandards.size());
+
+        // Step 2: Get additional task-specific patterns using semantic/keyword search
+        List<RetrievedPattern> searchPatterns = retrieveGlobalPatterns(taskContext, topK);
+        log.debug("Retrieved {} task-specific patterns (topK={})", searchPatterns.size(), topK);
+
+        // Step 3: Get project-specific patterns if projectPath provided
         List<RetrievedPattern> projectPatterns = new ArrayList<>();
         if (Objects.nonNull(projectPath) && !projectPath.isBlank()) {
             projectPatterns = retrieveProjectPatterns(projectPath);
             log.debug("Retrieved {} project-specific patterns", projectPatterns.size());
         }
-        
-        // Step 3: Get conversational patterns if conversationId provided
+
+        // Step 4: Get conversational patterns if conversationId provided
         List<RetrievedPattern> conversationalPatterns = new ArrayList<>();
         if (Objects.nonNull(conversationId) && !conversationId.isBlank()) {
             conversationalPatterns = retrieveConversationalPatterns(conversationId);
             log.debug("Retrieved {} conversational patterns", conversationalPatterns.size());
         }
-        
-        // Step 4: Combine and deduplicate by pattern_id
-        return deduplicatePatterns(globalPatterns, projectPatterns, conversationalPatterns);
+
+        // Step 5: Combine and deduplicate by pattern_id
+        return deduplicatePatterns(globalStandards, searchPatterns, projectPatterns, conversationalPatterns);
     }
     
     /**
@@ -181,40 +189,47 @@ public class PatternRetriever {
     }
     
     /**
-     * Deduplicates patterns by pattern_id, preserving order (global, project, conversational).
-     * Higher priority patterns (project/conversational) override global patterns if duplicate.
+     * Fetches all patterns marked is_global_standard = true.
+     * These are returned unconditionally on every query — no topK cap applies.
+     * Relevance score is set to 1.0 so they sort first.
+     */
+    private List<RetrievedPattern> retrieveAllGlobalStandards() {
+        return patternRepository.findGlobalPatterns().stream()
+                .map(record -> convertFormalToRetrieved(record, "global_standard"))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Deduplicates patterns by pattern_id.
+     * Insertion order: global standards → search results → project standards → conversational.
+     * Later entries override earlier ones on collision so the highest-context source wins.
      */
     private List<RetrievedPattern> deduplicatePatterns(
-            List<RetrievedPattern> globalPatterns,
+            List<RetrievedPattern> globalStandards,
+            List<RetrievedPattern> searchPatterns,
             List<RetrievedPattern> projectPatterns,
             List<RetrievedPattern> conversationalPatterns) {
-        
+
         Map<String, RetrievedPattern> patternMap = new LinkedHashMap<>();
-        
-        // Add in priority order: global first, then project, then conversational
-        // This ensures higher priority patterns override lower priority ones
-        globalPatterns.forEach(p -> {
-            if (Objects.nonNull(p.getPatternId())) {
-                patternMap.put(p.getPatternId(), p);
-            }
+
+        globalStandards.forEach(p -> {
+            if (Objects.nonNull(p.getPatternId())) patternMap.put(p.getPatternId(), p);
         });
-        
+        searchPatterns.forEach(p -> {
+            if (Objects.nonNull(p.getPatternId())) patternMap.put(p.getPatternId(), p);
+        });
         projectPatterns.forEach(p -> {
-            if (Objects.nonNull(p.getPatternId())) {
-                patternMap.put(p.getPatternId(), p);
-            }
+            if (Objects.nonNull(p.getPatternId())) patternMap.put(p.getPatternId(), p);
         });
-        
         conversationalPatterns.forEach(p -> {
-            if (Objects.nonNull(p.getPatternId())) {
-                patternMap.put(p.getPatternId(), p);
-            }
+            if (Objects.nonNull(p.getPatternId())) patternMap.put(p.getPatternId(), p);
         });
-        
+
         List<RetrievedPattern> deduplicated = new ArrayList<>(patternMap.values());
-        log.info("Deduplicated patterns: {} total (global={}, project={}, conversational={})",
-            deduplicated.size(), globalPatterns.size(), projectPatterns.size(), conversationalPatterns.size());
-        
+        log.info("Deduplicated patterns: {} total (globalStandards={}, search={}, project={}, conversational={})",
+                deduplicated.size(), globalStandards.size(), searchPatterns.size(),
+                projectPatterns.size(), conversationalPatterns.size());
+
         return deduplicated;
     }
     
