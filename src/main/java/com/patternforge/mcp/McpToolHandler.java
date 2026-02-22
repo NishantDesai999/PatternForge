@@ -147,14 +147,14 @@ public class McpToolHandler {
     }
 
     private JsonNode handleCapturePattern(JsonNode args) {
-        PatternCaptureRequest request = new PatternCaptureRequest();
-        request.setDescription(getStringArg(args, "description"));
-        request.setSource(getStringArg(args, "source"));
-        request.setProjectPath(getStringArg(args, "projectPath"));
-
-        if (args.has("codeExample"))    request.setCodeExample(args.get("codeExample").asText());
-        if (args.has("rationale"))      request.setRationale(args.get("rationale").asText());
-        if (args.has("conversationId")) request.setConversationId(args.get("conversationId").asText());
+        PatternCaptureRequest request = PatternCaptureRequest.builder()
+            .description(getStringArg(args, "description"))
+            .source(getStringArg(args, "source"))
+            .projectPath(getStringArg(args, "projectPath"))
+            .codeExample(args.has("codeExample") ? args.get("codeExample").asText() : null)
+            .rationale(args.has("rationale") ? args.get("rationale").asText() : null)
+            .conversationId(args.has("conversationId") ? args.get("conversationId").asText() : null)
+            .build();
 
         ResponseEntity<?> response = patternCaptureController.capturePattern(request);
         if (response.getBody() instanceof PatternCaptureResponse captured) {
@@ -172,16 +172,13 @@ public class McpToolHandler {
     }
 
     private JsonNode handleRecordUsage(JsonNode args) throws Exception {
-        PatternUsageRequest request = new PatternUsageRequest();
         String patternIdStr = getStringArg(args, "patternId");
-        if (Objects.nonNull(patternIdStr)) {
-            request.setPatternId(UUID.fromString(patternIdStr));
-        }
-        request.setProjectPath(getStringArg(args, "projectPath"));
-        request.setSuccess(args.has("success") && args.get("success").asBoolean());
-        if (args.has("taskType")) {
-            request.setTaskType(args.get("taskType").asText());
-        }
+        PatternUsageRequest request = PatternUsageRequest.builder()
+            .patternId(Objects.nonNull(patternIdStr) ? UUID.fromString(patternIdStr) : null)
+            .projectPath(getStringArg(args, "projectPath"))
+            .success(args.has("success") && args.get("success").asBoolean())
+            .taskType(args.has("taskType") ? args.get("taskType").asText() : null)
+            .build();
 
         ResponseEntity<?> response = patternController.recordPatternUsage(request);
         String status = (response.getBody() instanceof PatternUsageResponse usage)

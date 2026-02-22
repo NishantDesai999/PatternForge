@@ -207,12 +207,12 @@ public class PatternExtractionService {
     }
 
     private PatternDto toDto(PatternsRecord record) {
-        Map<String, Object> codeExamples = null;
+        Map<String, String> codeExamples = null;
         if (Objects.nonNull(record.getCodeExamples())) {
             try {
                 codeExamples = objectMapper.readValue(
                         record.getCodeExamples().data(),
-                        new TypeReference<Map<String, Object>>() {}
+                        new TypeReference<Map<String, String>>() {}
                 );
             } catch (Exception exception) {
                 log.warn("Failed to parse code examples for pattern: {}", record.getPatternId());
