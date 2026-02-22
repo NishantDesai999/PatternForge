@@ -1,57 +1,67 @@
 package com.patternforge;
 
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.Objects;
 
-/**
- * Abstract base class for integration tests using Testcontainers with PostgreSQL 14.
- * Provides automatic database setup, cleanup, and shared DSLContext access.
- * All integration tests should extend this class.
- */
+@Slf4j
 @SpringBootTest
+@ActiveProfiles("test")
 @Testcontainers
 public abstract class AbstractIntegrationTest {
-    
+
     @Container
-    protected static final PostgreSQLContainer<?> POSTGRESQL_CONTAINER = 
-        new PostgreSQLContainer<>("pgvector/pgvector:pg14")
-            .withDatabaseName("patternforge_test")
-            .withUsername("test_user")
-            .withPassword("test_password")
+    static final PostgreSQLContainer<?> POSTGRESQL_CONTAINER = new PostgreSQLContainer<>("pgvector/pgvector:pg14")
+            .withDatabaseName("patternforge")
+            .withUsername("postgres")
+            .withPassword("postgres")
             .withInitScript("db/schema.sql");
-    
+
     @Autowired
     protected DSLContext dsl;
-    
+
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRESQL_CONTAINER::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRESQL_CONTAINER::getUsername);
         registry.add("spring.datasource.password", POSTGRESQL_CONTAINER::getPassword);
-        registry.add("spring.jooq.sql-dialect", () -> "POSTGRES");
     }
-    
+
     @BeforeAll
     static void validateContainer() {
         if (!POSTGRESQL_CONTAINER.isRunning()) {
             throw new IllegalStateException("PostgreSQL container failed to start");
         }
     }
-    
+
+    @AfterAll
+    static void cleanUp(@Autowired DataSource dataSource) {
+        try {
+            Connection connection = dataSource.getConnection();
+            connection.close();
+        } catch (SQLException e) {
+            log.error("connection was not closed", e);
+        }
+    }
+
     @AfterEach
     void cleanDatabase() {
         if (Objects.nonNull(dsl)) {
-            // Clean tables in correct order to respect foreign key constraints
             dsl.execute("TRUNCATE TABLE pattern_usage CASCADE");
             dsl.execute("TRUNCATE TABLE pattern_promotions CASCADE");
             dsl.execute("TRUNCATE TABLE pattern_quality_gates CASCADE");

@@ -132,6 +132,8 @@ class PatternRepositoryIntegrationTest extends AbstractIntegrationTest {
                 .set(PATTERNS.PATTERN_NAME, name)
                 .set(PATTERNS.TITLE, title)
                 .set(PATTERNS.DESCRIPTION, title + " description")
+                .set(PATTERNS.CATEGORY, "general")
+                .set(PATTERNS.WHEN_TO_USE, "Use this pattern")
                 .set(PATTERNS.IS_GLOBAL_STANDARD, isGlobal)
                 .set(PATTERNS.IS_PROJECT_STANDARD, isProject)
                 .set(PATTERNS.LANGUAGES, new String[]{"java"})

@@ -15,14 +15,16 @@ import javax.sql.DataSource;
 public class DatabaseConfig {
     
     @Bean
-    public DataSourceConnectionProvider connectionProvider(DataSource dataSource) {
+    public DataSourceConnectionProvider connectionProvider(DataSource dataSource)
+    {
         return new DataSourceConnectionProvider(
             new TransactionAwareDataSourceProxy(dataSource)
         );
     }
     
     @Bean
-    public DefaultConfiguration configuration(DataSourceConnectionProvider connectionProvider) {
+    public DefaultConfiguration configuration(DataSourceConnectionProvider connectionProvider)
+    {
         DefaultConfiguration jooqConfiguration = new DefaultConfiguration();
         jooqConfiguration.set(connectionProvider);
         jooqConfiguration.set(SQLDialect.POSTGRES);
@@ -30,7 +32,8 @@ public class DatabaseConfig {
     }
     
     @Bean
-    public DSLContext dsl(DefaultConfiguration configuration) {
+    public DSLContext dsl(DefaultConfiguration configuration)
+    {
         return new DefaultDSLContext(configuration);
     }
 }
