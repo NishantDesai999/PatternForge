@@ -150,10 +150,11 @@ class PatternUsageServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void shouldThrowWhenPatternIdIsNull() {
-        PatternUsageRequest request = new PatternUsageRequest();
-        request.setProjectPath("/test/proj");
-        request.setTaskType("fix_bug");
-        request.setSuccess(true);
+        PatternUsageRequest request = PatternUsageRequest.builder()
+                .projectPath("/test/proj")
+                .taskType("fix_bug")
+                .success(true)
+                .build();
 
         assertThatThrownBy(() -> patternUsageService.recordUsage(request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -162,10 +163,11 @@ class PatternUsageServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void shouldThrowWhenProjectPathIsNull() {
-        PatternUsageRequest request = new PatternUsageRequest();
-        request.setPatternId(UUID.randomUUID());
-        request.setTaskType("fix_bug");
-        request.setSuccess(true);
+        PatternUsageRequest request = PatternUsageRequest.builder()
+                .patternId(UUID.randomUUID())
+                .taskType("fix_bug")
+                .success(true)
+                .build();
 
         assertThatThrownBy(() -> patternUsageService.recordUsage(request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -174,11 +176,12 @@ class PatternUsageServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void shouldThrowWhenProjectPathIsBlank() {
-        PatternUsageRequest request = new PatternUsageRequest();
-        request.setPatternId(UUID.randomUUID());
-        request.setProjectPath("   ");
-        request.setTaskType("fix_bug");
-        request.setSuccess(true);
+        PatternUsageRequest request = PatternUsageRequest.builder()
+                .patternId(UUID.randomUUID())
+                .projectPath("   ")
+                .taskType("fix_bug")
+                .success(true)
+                .build();
 
         assertThatThrownBy(() -> patternUsageService.recordUsage(request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -187,10 +190,11 @@ class PatternUsageServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void shouldThrowWhenTaskTypeIsNull() {
-        PatternUsageRequest request = new PatternUsageRequest();
-        request.setPatternId(UUID.randomUUID());
-        request.setProjectPath("/test/proj");
-        request.setSuccess(true);
+        PatternUsageRequest request = PatternUsageRequest.builder()
+                .patternId(UUID.randomUUID())
+                .projectPath("/test/proj")
+                .success(true)
+                .build();
 
         assertThatThrownBy(() -> patternUsageService.recordUsage(request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -199,11 +203,12 @@ class PatternUsageServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void shouldThrowWhenSuccessIsNull() {
-        PatternUsageRequest request = new PatternUsageRequest();
-        request.setPatternId(UUID.randomUUID());
-        request.setProjectPath("/test/proj");
-        request.setTaskType("fix_bug");
-        // success not set → null
+        // success not set in builder → null Boolean
+        PatternUsageRequest request = PatternUsageRequest.builder()
+                .patternId(UUID.randomUUID())
+                .projectPath("/test/proj")
+                .taskType("fix_bug")
+                .build();
 
         assertThatThrownBy(() -> patternUsageService.recordUsage(request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -253,11 +258,11 @@ class PatternUsageServiceIntegrationTest extends AbstractIntegrationTest {
 
     private PatternUsageRequest buildRequest(
             UUID patternId, String projectPath, String taskType, boolean success) {
-        PatternUsageRequest request = new PatternUsageRequest();
-        request.setPatternId(patternId);
-        request.setProjectPath(projectPath);
-        request.setTaskType(taskType);
-        request.setSuccess(success);
-        return request;
+        return PatternUsageRequest.builder()
+                .patternId(patternId)
+                .projectPath(projectPath)
+                .taskType(taskType)
+                .success(success)
+                .build();
     }
 }
