@@ -33,6 +33,9 @@ public class WorkflowProperties {
     private List<String> projectWorkflowDirs = List.of(
             ".opencode/workflows",
             ".claude/workflows",
+            ".cursor/workflows",
+            ".windsurf/workflows",
+            ".aider/workflows",
             ".agent/workflows"
     );
 

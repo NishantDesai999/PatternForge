@@ -51,10 +51,16 @@ patternforge:
     project-workflow-dirs:
       - .opencode/workflows
       - .claude/workflows
+      - .cursor/workflows
+      - .windsurf/workflows
+      - .aider/workflows
       - .agent/workflows
     global-workflow-paths:
       - ${HOME}/.config/opencode/workflows
       - ${HOME}/.claude/workflows
+      - ${HOME}/.cursor/workflows
+      - ${HOME}/.windsurf/workflows
+      - ${HOME}/.aider/workflows
       - ${HOME}/.patternforge/workflows
 
   # Pattern extraction via LLM
