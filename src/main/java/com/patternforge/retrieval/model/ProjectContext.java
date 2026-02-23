@@ -2,19 +2,15 @@ package com.patternforge.retrieval.model;
 
 import java.util.List;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Value;
 
 /**
  * Project-level context information.
  * Provides metadata about the project for pattern retrieval and workflow customization.
  */
-@Data
+@Value
 @Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class ProjectContext {
     
     private String projectId;

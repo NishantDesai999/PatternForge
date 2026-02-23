@@ -88,7 +88,7 @@ public class PatternUsageService {
         
         Double successRate = dsl.select(
                 DSL.count().filterWhere(PATTERN_USAGE.SUCCESS.isTrue()).cast(Double.class)
-                    .div(DSL.count().cast(Double.class))
+                    .div(DSL.nullif(DSL.count(), 0).cast(Double.class))
             )
             .from(PATTERN_USAGE)
             .where(PATTERN_USAGE.PATTERN_ID.eq(patternId))

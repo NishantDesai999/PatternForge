@@ -2,19 +2,15 @@ package com.patternforge.retrieval.model;
 
 import java.util.Map;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Value;
 
 /**
  * Represents a pattern retrieved from semantic search.
  * Contains pattern metadata, code examples, and relevance metrics for task-specific retrieval.
  */
-@Data
+@Value
 @Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class RetrievedPattern {
     
     private String patternId;

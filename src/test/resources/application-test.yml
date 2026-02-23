@@ -1,8 +1,9 @@
 spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/patternforge
-    username: postgres
-    password: postgres
   jooq:
     sql-dialect: POSTGRES
 
+# Logging (helps verify container startup)
+logging:
+  level:
+    org.testcontainers: INFO
+    com.patternforge.util.CleanUpUtil: DEBUG

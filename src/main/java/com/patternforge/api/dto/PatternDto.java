@@ -1,7 +1,7 @@
 package com.patternforge.api.dto;
 
 import lombok.Builder;
-import lombok.Data;
+import lombok.Value;
 
 import java.util.List;
 import java.util.Map;
@@ -11,7 +11,7 @@ import java.util.UUID;
  * Data Transfer Object for Pattern API responses.
  * Decouples REST API from jOOQ database records to avoid Jackson serialization issues.
  */
-@Data
+@Value
 @Builder
 public class PatternDto {
     

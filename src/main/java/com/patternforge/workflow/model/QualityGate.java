@@ -1,18 +1,14 @@
 package com.patternforge.workflow.model;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Value;
 
 /**
  * Quality gate definition for workflow validation.
  * Blocks execution if gate fails and isBlocking is true.
  */
-@Data
+@Value
 @Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class QualityGate {
     private String gateName;
     private String gateType;
