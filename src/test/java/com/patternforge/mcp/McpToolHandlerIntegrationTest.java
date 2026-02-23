@@ -208,6 +208,8 @@ class McpToolHandlerIntegrationTest extends AbstractIntegrationTest {
                 .set(PATTERNS.PATTERN_NAME, name)
                 .set(PATTERNS.TITLE, title)
                 .set(PATTERNS.DESCRIPTION, "Test description")
+                .set(PATTERNS.CATEGORY, "test")
+                .set(PATTERNS.WHEN_TO_USE, "For testing purposes")
                 .set(PATTERNS.IS_PROJECT_STANDARD, false)
                 .set(PATTERNS.IS_GLOBAL_STANDARD, false)
                 .set(PATTERNS.LANGUAGES, new String[]{"java"})

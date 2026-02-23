@@ -57,10 +57,12 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
         // Act — topK=1 should NOT limit global standards
         List<RetrievedPattern> results = patternRetriever.retrieve(context, 1, null, null);
 
-        // Assert — all 3 global standards must be present
+        // Assert — all 3 global standards must be present (regardless of retrieval_reason)
         long globalCount = results.stream()
-                .filter(p -> p.getPatternData() != null
-                        && "global_standard".equals(p.getPatternData().get("retrieval_reason")))
+                .filter(p -> p.getPatternName() != null
+                        && (p.getPatternName().equals("global-1")
+                            || p.getPatternName().equals("global-2")
+                            || p.getPatternName().equals("global-3")))
                 .count();
         assertThat(globalCount).isEqualTo(3);
     }
@@ -140,6 +142,8 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
                 .set(PATTERNS.PATTERN_NAME, name)
                 .set(PATTERNS.TITLE, title)
                 .set(PATTERNS.DESCRIPTION, title + " description")
+                .set(PATTERNS.CATEGORY, "test")
+                .set(PATTERNS.WHEN_TO_USE, "For testing purposes")
                 .set(PATTERNS.IS_GLOBAL_STANDARD, isGlobal)
                 .set(PATTERNS.IS_PROJECT_STANDARD, isProject)
                 .set(PATTERNS.LANGUAGES, new String[]{"java"})

@@ -2,19 +2,15 @@ package com.patternforge.workflow.model;
 
 import java.util.List;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Value;
 
 /**
  * Metadata describing workflow characteristics for matching and selection.
  * Used by workflow engine to select appropriate workflows.
  */
-@Data
+@Value
 @Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class WorkflowMetadata {
     private String workflowName;
     private List<String> taskTypes;
