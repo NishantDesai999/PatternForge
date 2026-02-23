@@ -65,9 +65,14 @@ patternforge:
 
   # Pattern extraction via LLM
   extraction:
+    # Anthropic model for pattern extraction (fallback if Ollama unavailable)
     llm-model: claude-sonnet-4-6
     temperature: 0.1
     max-tokens: 4000
+    # Ollama model for pattern extraction (primary option - free!)
+    ollama-model: llama3.3:latest
+    # Prefer Ollama over Anthropic (set to false to always use Anthropic)
+    prefer-ollama: true
 
   # Anthropic API client
   anthropic:

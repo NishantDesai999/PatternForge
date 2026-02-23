@@ -32,6 +32,7 @@ import java.util.Objects;
 public class PatternExtractionService {
 
     private final AnthropicClient anthropicClient;
+    private final OllamaClient ollamaClient;
     private final PatternRepository patternRepository;
     private final ObjectMapper objectMapper;
 
@@ -40,6 +41,9 @@ public class PatternExtractionService {
 
     @Value("${patternforge.extraction.max-tokens}")
     private int maxTokens;
+
+    @Value("${patternforge.extraction.prefer-ollama:true}")
+    private boolean preferOllama;
 
     private static final double EXTRACTED_CONFIDENCE = 0.85;
 
@@ -72,10 +76,8 @@ public class PatternExtractionService {
             throw new IllegalArgumentException("Failed to read file: " + filePath, exception);
         }
 
-        log.info("Extracting patterns from file={}, model={}", filePath, llmModel);
-
         String prompt = buildExtractionPrompt(fileContent, filePath);
-        String llmResponse = anthropicClient.complete(llmModel, maxTokens, prompt);
+        String llmResponse = callLlm(filePath, prompt);
 
         List<Map<String, Object>> rawPatterns = parseJsonResponse(llmResponse);
         log.info("LLM returned {} raw pattern entries", rawPatterns.size());
@@ -89,6 +91,38 @@ public class PatternExtractionService {
         return saved.stream()
                 .map(this::toDto)
                 .toList();
+    }
+
+    /**
+     * Call LLM for pattern extraction - tries Ollama first, falls back to Anthropic.
+     *
+     * @param filePath file being processed (for logging)
+     * @param prompt the extraction prompt
+     * @return LLM response text
+     */
+    private String callLlm(String filePath, String prompt) {
+        // Try Ollama first if preferred and available
+        if (preferOllama && ollamaClient.isAvailable()) {
+            try {
+                log.info("Extracting patterns from file={} using Ollama model={}", 
+                        filePath, ollamaClient.getDefaultModel());
+                String response = ollamaClient.complete(null, prompt);
+                log.info("Ollama extraction successful for file={}", filePath);
+                return response;
+            } catch (OllamaApiException e) {
+                log.warn("Ollama extraction failed for file={}, falling back to Anthropic: {}", 
+                        filePath, e.getMessage());
+                // Fall through to Anthropic
+            }
+        } else if (preferOllama) {
+            log.info("Ollama preferred but not available, using Anthropic for file={}", filePath);
+        }
+
+        // Use Anthropic (either as primary choice or as fallback)
+        log.info("Extracting patterns from file={} using Anthropic model={}", filePath, llmModel);
+        String response = anthropicClient.complete(llmModel, maxTokens, prompt);
+        log.info("Anthropic extraction successful for file={}", filePath);
+        return response;
     }
 
     private String buildExtractionPrompt(String fileContent, String filePath) {

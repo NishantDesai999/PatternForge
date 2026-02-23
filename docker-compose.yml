@@ -13,12 +13,16 @@ services:
       SPRING_DATASOURCE_PASSWORD: postgres
       PATTERNFORGE_OLLAMA_URL: http://host.docker.internal:11434
       PATTERNFORGE_OLLAMA_MODEL: nomic-embed-text
+      # Anthropic API key for pattern extraction (pass from host environment)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       JAVA_OPTS: "-Xmx512m -Xms256m"
     ports:
       - "15550:15550"
       - "8765:8765"
     volumes:
       - app_logs:/app/logs
+      # Mount home directory so PatternForge can access project files
+      - /Users/nishant.desai:/Users/nishant.desai:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:15550/actuator/health"]
       interval: 30s
