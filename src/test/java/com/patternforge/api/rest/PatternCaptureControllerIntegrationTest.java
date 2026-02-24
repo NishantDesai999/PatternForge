@@ -77,7 +77,7 @@ class PatternCaptureControllerIntegrationTest extends AbstractIntegrationTest {
         assertThat(pattern.getRationale()).isEqualTo("Fail fast on nulls");
         assertThat(pattern.getConfidence()).isEqualTo(0.95);
         assertThat(pattern.getPromotionCount()).isEqualTo(0);
-        assertThat(pattern.getIsProjectStandard()).isFalse();
+        assertThat(pattern.getIsProjectStandard()).isTrue();  // Auto-promoted to project standard
         assertThat(pattern.getIsGlobalStandard()).isFalse();
         
         // Verify project data in database

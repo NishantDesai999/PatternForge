@@ -1,14 +1,15 @@
 -- ============================================
 -- PatternForge Database Schema
 -- ============================================
--- Version: 1.0.0
--- Date: 2026-02-15
+-- Version: 1.0.1
+-- Date: 2026-02-24
 -- Description: Complete database schema for PatternForge
 -- Execution: psql -U postgres -d patternforge -f schema.sql
 --
 -- IMPORTANT: This is the SINGLE SOURCE OF TRUTH for database schema
 -- All changes should be made to this file using ALTER statements
 -- with IF NOT EXISTS / IF EXISTS guards for idempotency
+-- See SCHEMA MIGRATIONS section at end of file for all changes
 -- ============================================
 
 -- ============================================
@@ -191,6 +192,7 @@ CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(project_name);
 CREATE INDEX IF NOT EXISTS idx_projects_path ON projects(project_path);
 
 -- Conversational Patterns Table (v1.0.0)
+-- Stores patterns captured during agent-user interactions.
 CREATE TABLE IF NOT EXISTS conversational_patterns (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     
@@ -473,4 +475,37 @@ END $$;
 
 -- ============================================
 -- END OF SCHEMA v1.0.0
+-- ============================================
+
+-- ============================================
+-- SCHEMA MIGRATIONS (v1.0.1+)
+-- ============================================
+-- All schema changes after initial v1.0.0 release must be captured
+-- as ALTER statements with idempotent guards for safe re-execution.
+-- ============================================
+
+-- Migration v1.0.1 (2026-02-24)
+-- Change: Auto-promote conversational patterns to project standard on capture
+-- Rationale: Patterns captured for a project should be immediately available
+--            in project queries without requiring manual promotion or conversationId linking
+-- Impact: PatternRetriever now returns all conversational patterns for a project,
+--         making project-specific learning work across sessions
+DO $$
+BEGIN
+    -- Change default value for is_project_standard from FALSE to TRUE
+    ALTER TABLE conversational_patterns 
+    ALTER COLUMN is_project_standard SET DEFAULT TRUE;
+    
+    -- Note: We do NOT update existing patterns here to preserve test data integrity.
+    -- Production database update should be done separately if needed.
+    
+    RAISE NOTICE 'Migration v1.0.1 applied: conversational_patterns.is_project_standard now defaults to TRUE';
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'Migration v1.0.1 already applied or failed: %', SQLERRM;
+END $$;
+
+-- ============================================
+-- END OF MIGRATIONS
 -- ============================================

@@ -146,12 +146,12 @@ public class PatternRetriever {
         List<ConversationalPatternsRecord> conversationalPatterns = 
             conversationalPatternRepository.findByProjectId(projectId);
         
-        // Filter to project standards only
-        List<ConversationalPatternsRecord> projectStandards = conversationalPatterns.stream()
-            .filter(cp -> Boolean.TRUE.equals(cp.getIsProjectStandard()))
-            .collect(Collectors.toList());
+        // Include ALL conversational patterns for this project.
+        // is_project_standard flag is for analytics/tracking only.
+        // All patterns captured for a project should be available in project queries.
+        List<ConversationalPatternsRecord> projectStandards = conversationalPatterns;
         
-        log.debug("Found {} project standard patterns for project {}", projectStandards.size(), projectId);
+        log.debug("Found {} project patterns for project {}", projectStandards.size(), projectId);
         
         List<RetrievedPattern> results = new ArrayList<>();
         

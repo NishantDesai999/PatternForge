@@ -110,7 +110,7 @@ public class PatternCaptureController {
 
         record.setConfidence(Objects.nonNull(request.getConfidence()) ? request.getConfidence() : 0.95);
         record.setPromotionCount(0);
-        record.setIsProjectStandard(false);
+        record.setIsProjectStandard(true);  // Auto-promote to project standard on capture
         record.setIsGlobalStandard(false);
 
         return record;
