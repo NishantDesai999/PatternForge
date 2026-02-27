@@ -91,7 +91,6 @@ public class WorkflowBuilder {
                 .tool("code_analyzer")
                 .target("test_file")
                 .patternReferences(extractPatternIds(patterns))
-                .resolvedPatterns(patterns)
                 .validation("All missing imports identified")
                 .build());
 
@@ -137,7 +136,6 @@ public class WorkflowBuilder {
                 .tool("code_generator")
                 .target("controller_file")
                 .patternReferences(extractPatternIds(patterns))
-                .resolvedPatterns(patterns)
                 .validation("Controller method created with proper annotations")
                 .build());
 
@@ -199,7 +197,6 @@ public class WorkflowBuilder {
                 .tool("code_analyzer")
                 .target("target_files")
                 .patternReferences(extractPatternIds(patterns))
-                .resolvedPatterns(patterns)
                 .validation("Code structure analyzed and refactoring plan created")
                 .build());
 
@@ -253,7 +250,6 @@ public class WorkflowBuilder {
                 .tool("code_editor")
                 .target("target_files")
                 .patternReferences(extractPatternIds(patterns))
-                .resolvedPatterns(patterns)
                 .validation("Patterns applied successfully")
                 .build());
 
