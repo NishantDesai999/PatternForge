@@ -74,6 +74,16 @@ patternforge:
     # Prefer Ollama over Anthropic (set to false to always use Anthropic)
     prefer-ollama: true
 
+  # Pattern retrieval tuning — controls token usage in query responses
+  retrieval:
+    similarity-threshold: 0.3   # minimum cosine similarity for vector search results
+    max-project-patterns: 5     # cap on project-specific conversational patterns
+    max-total-patterns: 20      # hard upper limit on patterns per response
+
+  # Auto-promotion scheduler
+  promotion:
+    interval-ms: 3600000  # 1 hour — how often to check for promotable patterns
+
   # Anthropic API client
   anthropic:
     api-key: ${ANTHROPIC_API_KEY:}

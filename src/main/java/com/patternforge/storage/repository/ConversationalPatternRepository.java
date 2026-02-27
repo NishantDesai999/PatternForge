@@ -33,9 +33,28 @@ public class ConversationalPatternRepository {
         if (Objects.isNull(projectId)) {
             return List.of();
         }
-        
+
         return dsl.selectFrom(CONVERSATIONAL_PATTERNS)
             .where(CONVERSATIONAL_PATTERNS.PROJECT_ID.eq(projectId))
+            .fetch();
+    }
+
+    /**
+     * Returns the most relevant project patterns up to the given limit.
+     * Ordered by: project standards first, then highest promotion count, then newest.
+     */
+    public List<ConversationalPatternsRecord> findByProjectId(UUID projectId, int limit) {
+        if (Objects.isNull(projectId)) {
+            return List.of();
+        }
+
+        return dsl.selectFrom(CONVERSATIONAL_PATTERNS)
+            .where(CONVERSATIONAL_PATTERNS.PROJECT_ID.eq(projectId))
+            .orderBy(
+                CONVERSATIONAL_PATTERNS.IS_PROJECT_STANDARD.desc(),
+                CONVERSATIONAL_PATTERNS.PROMOTION_COUNT.desc().nullsLast(),
+                CONVERSATIONAL_PATTERNS.CREATED_AT.desc().nullsLast())
+            .limit(limit)
             .fetch();
     }
     

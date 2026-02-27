@@ -1,5 +1,6 @@
 package com.patternforge.workflow.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.patternforge.retrieval.model.RetrievedPattern;
 
 import java.util.List;
@@ -24,6 +25,7 @@ public class ExecutionStep {
     private String tool;
     private String target;
     private List<String> patternReferences;
+    @JsonIgnore
     private List<RetrievedPattern> resolvedPatterns;
     private String validation;
     private String command;
