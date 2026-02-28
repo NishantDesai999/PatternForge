@@ -131,7 +131,7 @@ public class PatternRetriever {
 
         if (embeddingService.isAvailable()) {
             log.info("Using vector search for pattern retrieval");
-            float[] embedding = embeddingService.generateEmbedding(query);
+            float[] embedding = embeddingService.generateQueryEmbedding(query);
 
             if (Objects.nonNull(embedding)) {
                 return vectorSearchService.search(
@@ -372,42 +372,32 @@ public class PatternRetriever {
     }
     
     /**
-     * Builds searchable query text from task context components.
-     * Combines taskType, components, and concerns into single searchable string.
+     * Builds searchable query text from task context.
+     * Uses the raw task description as the primary semantic signal. Appending heuristic
+     * keywords (taskType, components, concerns) was found to degrade embedding quality
+     * by pushing the vector away from the user's actual intent.
+     *
+     * <p>Language/framework are still appended when present because they are strong
+     * disambiguation signals (e.g., "java" vs "python" patterns) without adding noise.
      *
      * @param taskContext The task context to convert
      * @return Query string for search
      */
     private String buildQuery(TaskContext taskContext) {
         StringBuilder queryBuilder = new StringBuilder();
-        
-        // CRITICAL: Include original description for better keyword matching
+
         if (Objects.nonNull(taskContext.getDescription()) && !taskContext.getDescription().isBlank()) {
-            queryBuilder.append(taskContext.getDescription()).append(" ");
+            queryBuilder.append(taskContext.getDescription());
         }
-        
-        if (Objects.nonNull(taskContext.getTaskType())) {
-            queryBuilder.append(taskContext.getTaskType()).append(" ");
-        }
-        
-        if (Objects.nonNull(taskContext.getComponents()) && !taskContext.getComponents().isEmpty()) {
-            String componentsText = String.join(" ", taskContext.getComponents());
-            queryBuilder.append(componentsText).append(" ");
-        }
-        
-        if (Objects.nonNull(taskContext.getConcerns()) && !taskContext.getConcerns().isEmpty()) {
-            String concernsText = String.join(" ", taskContext.getConcerns());
-            queryBuilder.append(concernsText).append(" ");
-        }
-        
+
         if (Objects.nonNull(taskContext.getLanguage())) {
-            queryBuilder.append(taskContext.getLanguage()).append(" ");
+            queryBuilder.append(" ").append(taskContext.getLanguage());
         }
-        
+
         if (Objects.nonNull(taskContext.getFramework())) {
-            queryBuilder.append(taskContext.getFramework());
+            queryBuilder.append(" ").append(taskContext.getFramework());
         }
-        
+
         return queryBuilder.toString().trim();
     }
 }

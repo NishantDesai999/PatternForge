@@ -146,7 +146,7 @@ public class PatternController {
         for (PatternsRecord pattern : patterns) {
             try {
                 String embeddingText = buildEmbeddingText(pattern);
-                float[] embedding = embeddingService.generateEmbedding(embeddingText);
+                float[] embedding = embeddingService.generateDocumentEmbedding(embeddingText);
 
                 if (Objects.nonNull(embedding)) {
                     patternRepository.updateEmbedding(pattern.getPatternId(), embedding);
