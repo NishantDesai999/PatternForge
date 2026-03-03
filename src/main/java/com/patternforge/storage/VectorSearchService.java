@@ -2,6 +2,7 @@ package com.patternforge.storage;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.patternforge.config.RetrievalProperties;
 import com.patternforge.retrieval.model.RetrievedPattern;
 import com.patternforge.retrieval.model.TaskContext;
 import com.patternforge.util.VectorUtils;
@@ -31,6 +32,7 @@ public class VectorSearchService {
     
     private final DSLContext dsl;
     private final ObjectMapper objectMapper;
+    private final RetrievalProperties retrievalProperties;
     
     /**
      * Searches patterns using vector similarity.
@@ -42,7 +44,8 @@ public class VectorSearchService {
      */
     public List<RetrievedPattern> search(float[] queryEmbedding, TaskContext context, int topK) {
         String vectorStr = VectorUtils.toPostgresVector(queryEmbedding);
-        
+        double minSimilarity = retrievalProperties.getMinSimilarityThreshold();
+
         List<Object> results = dsl.select(
                 PATTERNS.PATTERN_ID,
                 PATTERNS.PATTERN_NAME,
@@ -57,6 +60,8 @@ public class VectorSearchService {
             )
             .from(PATTERNS)
             .where(buildFilters(context))
+            .and(DSL.field("1 - (embedding <=> ?::vector)", Double.class, vectorStr)
+                .greaterOrEqual(minSimilarity))
             .orderBy(DSL.field("embedding <=> ?::vector", vectorStr))
             .limit(topK)
             .fetch()

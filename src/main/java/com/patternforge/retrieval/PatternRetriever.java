@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.patternforge.config.RetrievalProperties;
 import com.patternforge.extraction.EmbeddingService;
 import com.patternforge.jooq.tables.records.ConversationalPatternsRecord;
 import com.patternforge.jooq.tables.records.PatternsRecord;
@@ -47,6 +48,7 @@ public class PatternRetriever {
     private final ProjectRepository projectRepository;
     private final PatternRepository patternRepository;
     private final ObjectMapper objectMapper;
+    private final RetrievalProperties retrievalProperties;
     
     /**
      * Retrieves relevant patterns for given task context.
@@ -69,9 +71,10 @@ public class PatternRetriever {
             return List.of();
         }
 
-        // Step 1: Always include ALL global standards — never subject to topK cap
-        List<RetrievedPattern> globalStandards = retrieveAllGlobalStandards();
-        log.debug("Retrieved {} global standard patterns (uncapped)", globalStandards.size());
+        // Step 1: Include top global standards capped by config (sorted by success_rate DESC)
+        int globalCap = retrievalProperties.getMaxGlobalStandards();
+        List<RetrievedPattern> globalStandards = retrieveTopGlobalStandards(globalCap);
+        log.debug("Retrieved {} global standard patterns (cap={})", globalStandards.size(), globalCap);
 
         // Step 2: Get additional task-specific patterns using semantic/keyword search
         List<RetrievedPattern> searchPatterns = retrieveGlobalPatterns(taskContext, topK);
@@ -80,8 +83,9 @@ public class PatternRetriever {
         // Step 3: Get project-specific patterns if projectPath provided
         List<RetrievedPattern> projectPatterns = new ArrayList<>();
         if (Objects.nonNull(projectPath) && !projectPath.isBlank()) {
-            projectPatterns = retrieveProjectPatterns(projectPath);
-            log.debug("Retrieved {} project-specific patterns", projectPatterns.size());
+            int projectCap = retrievalProperties.getMaxProjectStandards();
+            projectPatterns = retrieveProjectPatterns(projectPath, projectCap);
+            log.debug("Retrieved {} project-specific patterns (cap={})", projectPatterns.size(), projectCap);
         }
 
         // Step 4: Get conversational patterns if conversationId provided
@@ -130,46 +134,49 @@ public class PatternRetriever {
     }
     
     /**
-     * Retrieves project-specific patterns for given project path.
+     * Retrieves up to {@code limit} project-specific patterns for given project path.
      * Includes both conversational patterns promoted to project standards
      * and their linked formal patterns.
      */
-    private List<RetrievedPattern> retrieveProjectPatterns(String projectPath) {
+    private List<RetrievedPattern> retrieveProjectPatterns(String projectPath, int limit) {
         Optional<ProjectsRecord> projectOpt = projectRepository.findByPath(projectPath);
-        
+
         if (projectOpt.isEmpty()) {
             log.debug("No project found for path: {}", projectPath);
             return List.of();
         }
-        
+
         UUID projectId = projectOpt.get().getProjectId();
-        List<ConversationalPatternsRecord> conversationalPatterns = 
+        List<ConversationalPatternsRecord> conversationalPatterns =
             conversationalPatternRepository.findByProjectId(projectId);
-        
-        // Include ALL conversational patterns for this project.
-        // is_project_standard flag is for analytics/tracking only.
-        // All patterns captured for a project should be available in project queries.
-        List<ConversationalPatternsRecord> projectStandards = conversationalPatterns;
-        
-        log.debug("Found {} project patterns for project {}", projectStandards.size(), projectId);
-        
+
+        // Include ALL conversational patterns for this project (is_project_standard is for
+        // analytics/tracking only, not a filter gate), but cap total to avoid unbounded growth.
+        List<ConversationalPatternsRecord> projectStandards = conversationalPatterns.stream()
+            .limit(limit)
+            .collect(Collectors.toList());
+
+        log.debug("Found {} project patterns for project {} (cap={})",
+            projectStandards.size(), projectId, limit);
+
+
         List<RetrievedPattern> results = new ArrayList<>();
-        
+
         // Add conversational patterns as retrieved patterns
         for (ConversationalPatternsRecord conversationalPattern : projectStandards) {
             results.add(convertConversationalToRetrieved(conversationalPattern, "project_standard"));
-            
+
             // If linked to formal pattern, retrieve that too
             if (Objects.nonNull(conversationalPattern.getFormalPatternId())) {
-                Optional<PatternsRecord> formalPattern = 
+                Optional<PatternsRecord> formalPattern =
                     patternRepository.findById(conversationalPattern.getFormalPatternId());
-                
-                formalPattern.ifPresent(pattern -> 
+
+                formalPattern.ifPresent(pattern ->
                     results.add(convertFormalToRetrieved(pattern, "project_standard_formal"))
                 );
             }
         }
-        
+
         return results;
     }
     
@@ -189,12 +196,11 @@ public class PatternRetriever {
     }
     
     /**
-     * Fetches all patterns marked is_global_standard = true.
-     * These are returned unconditionally on every query — no topK cap applies.
-     * Relevance score is set to 1.0 so they sort first.
+     * Fetches the top {@code limit} global standard patterns ordered by success_rate DESC.
+     * Relevance score is set to 1.0 so they sort before task-specific results.
      */
-    private List<RetrievedPattern> retrieveAllGlobalStandards() {
-        return patternRepository.findGlobalPatterns().stream()
+    private List<RetrievedPattern> retrieveTopGlobalStandards(int limit) {
+        return patternRepository.findGlobalPatterns(limit).stream()
                 .map(record -> convertFormalToRetrieved(record, "global_standard"))
                 .collect(Collectors.toList());
     }

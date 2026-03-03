@@ -3,9 +3,7 @@ package com.patternforge.api.rest;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.patternforge.jooq.tables.records.PatternsRecord;
-import com.patternforge.storage.repository.ConversationalPatternRepository;
 import com.patternforge.storage.repository.PatternRepository;
-import com.patternforge.storage.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -19,6 +17,10 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+
+// Max patterns included in the generated standards document.
+// Large numbers make the document too expensive to inject into LLM context.
+// Tune via GET param ?maxGlobal=N if you need more in a one-off request.
 
 /**
  * Generates a dynamic, always-current standards document from the PatternForge knowledge base.
@@ -49,8 +51,6 @@ import java.util.Objects;
 public class StandardsController {
 
     private final PatternRepository patternRepository;
-    private final ProjectRepository projectRepository;
-    private final ConversationalPatternRepository conversationalPatternRepository;
     private final ObjectMapper objectMapper;
 
     /**
@@ -60,6 +60,9 @@ public class StandardsController {
      * @param language    primary language of the project (used to filter patterns)
      * @return formatted Markdown standards document
      */
+    private static final int MAX_GLOBALS_IN_DOCUMENT = 20;
+    private static final int MAX_PROJECT_IN_DOCUMENT = 10;
+
     @GetMapping(produces = MediaType.TEXT_PLAIN_VALUE)
     public ResponseEntity<String> generateStandards(
             @RequestParam String projectPath,
@@ -67,17 +70,14 @@ public class StandardsController {
 
         log.info("Generating standards for projectPath={}, language={}", projectPath, language);
 
-        List<PatternsRecord> globalPatterns = patternRepository.findGlobalPatterns();
-        List<PatternsRecord> allPatterns = patternRepository.findAll();
+        // Cap global patterns — findAll() was returning every pattern and building a
+        // massive document that explodes LLM token costs when injected as context.
+        List<PatternsRecord> globalPatterns = patternRepository.findGlobalPatterns(MAX_GLOBALS_IN_DOCUMENT);
 
-        // Project-specific: patterns whose source references this project path, or marked as project-standard
-        List<PatternsRecord> projectPatterns = allPatterns.stream()
-            .filter(p -> Boolean.FALSE.equals(p.getIsGlobalStandard()))
-            .filter(p -> Boolean.TRUE.equals(p.getIsProjectStandard())
-                || matchesProject(p, projectPath))
-            .toList();
+        // Project-specific: use the targeted query, no findAll()
+        List<PatternsRecord> projectPatterns = patternRepository.findProjectPatterns(projectPath, MAX_PROJECT_IN_DOCUMENT);
 
-        // Language-relevant patterns (global ones matching language, not already shown)
+        // Language-relevant patterns (global ones matching language)
         List<PatternsRecord> languagePatterns = globalPatterns.stream()
             .filter(p -> matchesLanguage(p, language))
             .toList();
@@ -258,13 +258,6 @@ public class StandardsController {
             return true; // Language-agnostic patterns apply everywhere
         }
         return Arrays.asList(pattern.getLanguages()).contains(language);
-    }
-
-    private boolean matchesProject(PatternsRecord pattern, String projectPath) {
-        if (Objects.isNull(pattern.getSource()) || pattern.getSource().isBlank()) {
-            return false;
-        }
-        return pattern.getSource().contains(projectPath);
     }
 
     private String capitalize(String input) {

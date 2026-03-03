@@ -196,17 +196,18 @@ public class WorkflowResolver {
                 continue;
             }
 
-            List<RetrievedPattern> resolvedPatterns = new ArrayList<>();
+            List<String> resolvedPatternNames = new ArrayList<>();
             for (String patternReference : step.getPatternReferences()) {
                 patterns.stream()
                         .filter(pattern -> matchesPatternReference(pattern, patternReference))
                         .findFirst()
-                        .ifPresent(resolvedPatterns::add);
+                        .map(RetrievedPattern::getPatternName)
+                        .ifPresent(resolvedPatternNames::add);
             }
 
-            if (!resolvedPatterns.isEmpty()) {
-                step.setResolvedPatterns(resolvedPatterns);
-                log.debug("Enriched step {} with {} resolved patterns", step.getStep(), resolvedPatterns.size());
+            if (!resolvedPatternNames.isEmpty()) {
+                step.setResolvedPatternNames(resolvedPatternNames);
+                log.debug("Enriched step {} with {} resolved pattern names", step.getStep(), resolvedPatternNames.size());
             }
         }
 
