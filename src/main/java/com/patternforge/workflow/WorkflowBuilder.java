@@ -91,7 +91,7 @@ public class WorkflowBuilder {
                 .tool("code_analyzer")
                 .target("test_file")
                 .patternReferences(extractPatternIds(patterns))
-                .resolvedPatterns(patterns)
+                .resolvedPatternNames(extractPatternNames(patterns))
                 .validation("All missing imports identified")
                 .build());
 
@@ -137,7 +137,7 @@ public class WorkflowBuilder {
                 .tool("code_generator")
                 .target("controller_file")
                 .patternReferences(extractPatternIds(patterns))
-                .resolvedPatterns(patterns)
+                .resolvedPatternNames(extractPatternNames(patterns))
                 .validation("Controller method created with proper annotations")
                 .build());
 
@@ -199,7 +199,7 @@ public class WorkflowBuilder {
                 .tool("code_analyzer")
                 .target("target_files")
                 .patternReferences(extractPatternIds(patterns))
-                .resolvedPatterns(patterns)
+                .resolvedPatternNames(extractPatternNames(patterns))
                 .validation("Code structure analyzed and refactoring plan created")
                 .build());
 
@@ -253,7 +253,7 @@ public class WorkflowBuilder {
                 .tool("code_editor")
                 .target("target_files")
                 .patternReferences(extractPatternIds(patterns))
-                .resolvedPatterns(patterns)
+                .resolvedPatternNames(extractPatternNames(patterns))
                 .validation("Patterns applied successfully")
                 .build());
 
@@ -344,6 +344,23 @@ public class WorkflowBuilder {
         }
         return patterns.stream()
                 .map(RetrievedPattern::getPatternId)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    /**
+     * Extracts pattern names from retrieved patterns for use in step references.
+     * Names only — full pattern objects are in the response-level patterns list.
+     *
+     * @param patterns retrieved patterns
+     * @return list of pattern names
+     */
+    private List<String> extractPatternNames(List<RetrievedPattern> patterns) {
+        if (Objects.isNull(patterns)) {
+            return new ArrayList<>();
+        }
+        return patterns.stream()
+                .map(RetrievedPattern::getPatternName)
                 .filter(Objects::nonNull)
                 .toList();
     }

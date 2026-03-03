@@ -63,6 +63,12 @@ patternforge:
       - ${HOME}/.aider/workflows
       - ${HOME}/.patternforge/workflows
 
+  # Pattern retrieval limits — keep query payloads small to control LLM token costs
+  retrieval:
+    max-global-standards: 5       # top N globals by success_rate per query (was unbounded)
+    max-project-standards: 3      # top N project standards per query (was unbounded)
+    min-similarity-threshold: 0.35  # discard vector results below this cosine similarity
+
   # Pattern extraction via LLM
   extraction:
     # Anthropic model for pattern extraction (fallback if Ollama unavailable)
