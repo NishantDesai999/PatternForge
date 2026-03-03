@@ -55,9 +55,11 @@ public class PatternRetriever {
      * Automatically selects vector or keyword search based on embedding service availability.
      * Also includes project-specific and conversational patterns when applicable.
      *
-     * <p>Global standards (is_global_standard = true) are always returned in full regardless
-     * of topK, so no cross-project mandatory standard is ever omitted. The topK limit applies
-     * only to the semantic/keyword search that surfaces additional task-specific patterns.
+     * <p>Global standards (is_global_standard = true) are selected by task relevance when Ollama
+     * is available — only globals relevant to this task are included, capped by
+     * {@code RetrievalProperties.maxGlobalStandards}. When Ollama is unavailable the top globals
+     * by success_rate are used as a fallback. The topK limit applies separately to the
+     * semantic/keyword search for additional task-specific patterns.
      *
      * @param taskContext The context describing the development task
      * @param topK Maximum number of patterns to retrieve from semantic/keyword search
@@ -71,13 +73,34 @@ public class PatternRetriever {
             return List.of();
         }
 
-        // Step 1: Include top global standards capped by config (sorted by success_rate DESC)
         int globalCap = retrievalProperties.getMaxGlobalStandards();
-        List<RetrievedPattern> globalStandards = retrieveTopGlobalStandards(globalCap);
-        log.debug("Retrieved {} global standard patterns (cap={})", globalStandards.size(), globalCap);
+        String query = buildQuery(taskContext);
 
-        // Step 2: Get additional task-specific patterns using semantic/keyword search
-        List<RetrievedPattern> searchPatterns = retrieveGlobalPatterns(taskContext, topK);
+        // Generate embedding once and reuse for all vector queries (avoids duplicate Ollama calls)
+        float[] embedding = null;
+        if (embeddingService.isAvailable()) {
+            embedding = embeddingService.generateEmbedding(query);
+            if (Objects.isNull(embedding)) {
+                log.warn("Embedding generation returned null - falling back to keyword search");
+            }
+        }
+
+        // Step 1: Global standards — task-similarity aware when Ollama is available.
+        // DCP-inspired: only include a global standard if it's relevant to THIS task.
+        // When Ollama is unavailable, fall back to success_rate ordering (no detail lost).
+        List<RetrievedPattern> globalStandards;
+        if (Objects.nonNull(embedding)) {
+            globalStandards = vectorSearchService.searchGlobalStandards(embedding, taskContext.getLanguage(), globalCap);
+            log.debug("Retrieved {} task-relevant global standards via vector search (cap={})",
+                globalStandards.size(), globalCap);
+        } else {
+            globalStandards = retrieveTopGlobalStandards(globalCap);
+            log.debug("Retrieved {} global standard patterns via success_rate fallback (cap={})",
+                globalStandards.size(), globalCap);
+        }
+
+        // Step 2: Task-specific patterns — reuse embedding generated above
+        List<RetrievedPattern> searchPatterns = retrieveGlobalPatterns(embedding, query, taskContext, topK);
         log.debug("Retrieved {} task-specific patterns (topK={})", searchPatterns.size(), topK);
 
         // Step 3: Get project-specific patterns if projectPath provided
@@ -112,24 +135,22 @@ public class PatternRetriever {
     }
     
     /**
-     * Retrieves global patterns using semantic or keyword search.
+     * Retrieves global patterns using the pre-computed embedding (or keyword fallback).
+     * Accepts the embedding generated in {@link #retrieve} to avoid a second Ollama call.
+     *
+     * @param embedding pre-computed query embedding, or null when Ollama is unavailable
+     * @param query     raw query string for keyword fallback
+     * @param taskContext task context for filters
+     * @param topK      maximum results to return
      */
-    private List<RetrievedPattern> retrieveGlobalPatterns(TaskContext taskContext, int topK) {
-        String query = buildQuery(taskContext);
-        log.debug("Built query from task context: {}", query);
-        
-        if (embeddingService.isAvailable()) {
-            log.info("Using vector search for pattern retrieval");
-            float[] embedding = embeddingService.generateEmbedding(query);
-            
-            if (Objects.nonNull(embedding)) {
-                return vectorSearchService.search(embedding, taskContext, topK);
-            }
-            
-            log.warn("Embedding generation returned null - falling back to keyword search");
+    private List<RetrievedPattern> retrieveGlobalPatterns(float[] embedding, String query,
+                                                           TaskContext taskContext, int topK) {
+        if (Objects.nonNull(embedding)) {
+            log.info("Using vector search for task-specific pattern retrieval");
+            return vectorSearchService.search(embedding, taskContext, topK);
         }
-        
-        log.info("Using keyword search for pattern retrieval");
+
+        log.info("Using keyword search for task-specific pattern retrieval");
         return keywordSearchService.search(query, taskContext, topK);
     }
     
