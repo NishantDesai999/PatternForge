@@ -30,13 +30,13 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
     @Test
     void shouldReturnEmptyListWhenNoPatternsExist() {
         TaskContext context = buildContext("general", "java");
-        List<RetrievedPattern> results = patternRetriever.retrieve(context, 5, null, null);
+        List<RetrievedPattern> results = patternRetriever.retrieve(context, 5, null, null).patterns();
         assertThat(results).isEmpty();
     }
 
     @Test
     void shouldReturnNullContextAsEmptyList() {
-        List<RetrievedPattern> results = patternRetriever.retrieve(null, 5, null, null);
+        List<RetrievedPattern> results = patternRetriever.retrieve(null, 5, null, null).patterns();
         assertThat(results).isEmpty();
     }
 
@@ -55,7 +55,7 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
         TaskContext context = buildContext("general", "java");
 
         // Act — topK=1 should NOT limit global standards
-        List<RetrievedPattern> results = patternRetriever.retrieve(context, 1, null, null);
+        List<RetrievedPattern> results = patternRetriever.retrieve(context, 1, null, null).patterns();
 
         // Assert — all 3 global standards must be present (regardless of retrieval_reason)
         long globalCount = results.stream()
@@ -73,7 +73,7 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
         UUID patternId = insertPattern("shared-pattern", "Shared Pattern", true, false);
 
         TaskContext context = buildContext("shared", "java");
-        List<RetrievedPattern> results = patternRetriever.retrieve(context, 10, null, null);
+        List<RetrievedPattern> results = patternRetriever.retrieve(context, 10, null, null).patterns();
 
         // Assert — pattern appears only once despite being in multiple sources
         long occurrences = results.stream()
@@ -92,7 +92,7 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
         TaskContext context = buildContext("general", "java");
 
         // Act
-        List<RetrievedPattern> results = patternRetriever.retrieve(context, 5, null, conversationId);
+        List<RetrievedPattern> results = patternRetriever.retrieve(context, 5, null, conversationId).patterns();
 
         // Assert — at least one conversational pattern present
         boolean hasConversational = results.stream()
@@ -110,7 +110,7 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
         TaskContext context = buildContext("general", "java");
 
         // Act — no conversationId provided
-        List<RetrievedPattern> results = patternRetriever.retrieve(context, 5, null, null);
+        List<RetrievedPattern> results = patternRetriever.retrieve(context, 5, null, null).patterns();
 
         // Assert — no session patterns
         boolean hasConversational = results.stream()
@@ -127,7 +127,7 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
         TaskContext context = buildContext("general", "java");
 
         // Act — legacy 2-arg signature
-        List<RetrievedPattern> results = patternRetriever.retrieve(context, 5);
+        List<RetrievedPattern> results = patternRetriever.retrieve(context, 5).patterns();
 
         // Assert
         assertThat(results).isNotEmpty();

@@ -68,6 +68,7 @@ patternforge:
     max-global-standards: 5       # top N globals by success_rate per query (was unbounded)
     max-project-standards: 3      # top N project standards per query (was unbounded)
     min-similarity-threshold: 0.35  # discard vector results below this cosine similarity
+    max-context-tokens: 8000      # token budget — patterns packed greedily by relevance until exhausted (0 to disable)
 
   # Pattern extraction via LLM
   extraction:

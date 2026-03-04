@@ -37,11 +37,9 @@ import lombok.extern.slf4j.Slf4j;
  * Uses semantic vector search when Ollama available, falls back to keyword search otherwise.
  * Also includes project-specific and conversational patterns when applicable.
  *
- * <p>Global standards (is_global_standard = true) are selected by task relevance when Ollama
- * is available — only globals relevant to this task are included, capped by
- * {@code RetrievalProperties.maxGlobalStandards}. When Ollama is unavailable the top globals
- * by success_rate are used as a fallback. The topK limit applies separately to the
- * semantic/keyword search for additional task-specific patterns.
+ * <p>After deduplication, patterns are packed greedily by relevance score into a configurable
+ * token budget ({@code patternforge.retrieval.max-context-tokens}). This ensures the response
+ * stays within the LLM's effective context regardless of how large individual patterns are.
  */
 @Service
 @RequiredArgsConstructor
@@ -58,26 +56,28 @@ public class PatternRetriever {
     private final RetrievalProperties retrievalProperties;
 
     /**
-     * Retrieves relevant patterns for given task context.
-     * Automatically selects vector or keyword search based on embedding service availability.
-     * Also includes project-specific and conversational patterns when applicable.
+     * Result of a retrieval operation, carrying both the patterns and token accounting.
+     */
+    public record RetrievalResult(List<RetrievedPattern> patterns, int estimatedTokens) {}
+
+    /**
+     * Retrieves relevant patterns for given task context, fitting them within a token budget.
      *
-     * <p>Global standards (is_global_standard = true) are selected by task relevance when Ollama
-     * is available — only globals relevant to this task are included, capped by
-     * {@code RetrievalProperties.maxGlobalStandards}. When Ollama is unavailable the top globals
-     * by success_rate are used as a fallback. The topK limit applies separately to the
-     * semantic/keyword search for additional task-specific patterns.
+     * <p>Patterns are gathered from four sources (global standards, task-specific search,
+     * project patterns, conversational patterns), deduplicated, sorted by relevance, then
+     * greedily packed into the configured token budget. This ensures the JSON payload stays
+     * predictable regardless of how large individual patterns are.
      *
      * @param taskContext The context describing the development task
      * @param topK Maximum number of patterns to retrieve from semantic/keyword search
      * @param projectPath Optional project path to include project-specific patterns
      * @param conversationId Optional conversation ID to include session patterns
-     * @return List of retrieved patterns ranked by relevance
+     * @return RetrievalResult with patterns and estimated token usage
      */
-    public List<RetrievedPattern> retrieve(TaskContext taskContext, int topK, String projectPath, String conversationId) {
+    public RetrievalResult retrieve(TaskContext taskContext, int topK, String projectPath, String conversationId) {
         if (Objects.isNull(taskContext)) {
             log.warn("TaskContext is null - returning empty results");
-            return List.of();
+            return new RetrievalResult(List.of(), 0);
         }
 
         int globalCap = retrievalProperties.getMaxGlobalStandards();
@@ -94,8 +94,6 @@ public class PatternRetriever {
         }
 
         // Step 1: Global standards — task-similarity aware when Ollama is available.
-        // DCP-inspired: only include a global standard if it's relevant to THIS task.
-        // When Ollama is unavailable, fall back to success_rate ordering (no detail lost).
         List<RetrievedPattern> globalStandards;
         if (Objects.nonNull(embedding)) {
             globalStandards = vectorSearchService.searchGlobalStandards(embedding, taskContext.getLanguage(), globalCap);
@@ -126,9 +124,9 @@ public class PatternRetriever {
             log.debug("Retrieved {} conversational patterns", conversationalPatterns.size());
         }
 
-        // Step 5: Combine, deduplicate, and enforce total cap
+        // Step 5: Combine, deduplicate, and fit within token budget
         List<RetrievedPattern> deduplicated = deduplicatePatterns(globalStandards, searchPatterns, projectPatterns, conversationalPatterns);
-        return enforceTotalCap(deduplicated);
+        return fitWithinTokenBudget(deduplicated);
     }
 
     /**
@@ -137,9 +135,9 @@ public class PatternRetriever {
      *
      * @param taskContext The context describing the development task
      * @param topK Maximum number of patterns to retrieve
-     * @return List of retrieved patterns ranked by relevance
+     * @return RetrievalResult with patterns and estimated token usage
      */
-    public List<RetrievedPattern> retrieve(TaskContext taskContext, int topK) {
+    public RetrievalResult retrieve(TaskContext taskContext, int topK) {
         return retrieve(taskContext, topK, null, null);
     }
 
@@ -235,23 +233,57 @@ public class PatternRetriever {
     }
 
     /**
-     * Enforces a hard upper limit on total patterns in the response.
-     * Keeps patterns sorted by relevance score descending; lowest-relevance patterns are trimmed.
+     * Packs patterns greedily by relevance score into the configured token budget.
+     *
+     * <p>Patterns are sorted by relevance (highest first). Each pattern's estimated token
+     * cost is computed via {@link TokenEstimator}. Patterns are added until the next one
+     * would exceed the budget. If budgeting is disabled ({@code maxContextTokens <= 0}),
+     * all patterns are returned with their total token estimate.
+     *
+     * @param patterns deduplicated candidate patterns
+     * @return RetrievalResult with the fitted list and total estimated tokens
      */
-    private List<RetrievedPattern> enforceTotalCap(List<RetrievedPattern> patterns) {
-        int maxTotal = retrievalProperties.getMaxGlobalStandards()
-                + retrievalProperties.getMaxProjectStandards() + 10;
-        if (patterns.size() <= maxTotal) {
-            return patterns;
+    private RetrievalResult fitWithinTokenBudget(List<RetrievedPattern> patterns) {
+        int budget = retrievalProperties.getMaxContextTokens();
+
+        // Sort by relevance descending so highest-value patterns are packed first
+        List<RetrievedPattern> sorted = patterns.stream()
+                .sorted(Comparator.comparingDouble(RetrievedPattern::getRelevanceScore).reversed())
+                .collect(Collectors.toList());
+
+        // If budgeting is disabled, return everything with token accounting
+        if (budget <= 0) {
+            int totalTokens = sorted.stream().mapToInt(TokenEstimator::estimate).sum();
+            log.info("Token budgeting disabled — returning all {} patterns (~{} tokens)",
+                    sorted.size(), totalTokens);
+            return new RetrievalResult(sorted, totalTokens);
         }
 
-        log.info("Enforcing total cap: {} patterns -> {} (trimming {} lowest-relevance)",
-                patterns.size(), maxTotal, patterns.size() - maxTotal);
+        List<RetrievedPattern> fitted = new ArrayList<>();
+        int usedTokens = 0;
 
-        return patterns.stream()
-                .sorted(Comparator.comparingDouble(RetrievedPattern::getRelevanceScore).reversed())
-                .limit(maxTotal)
-                .collect(Collectors.toList());
+        for (RetrievedPattern pattern : sorted) {
+            int cost = TokenEstimator.estimate(pattern);
+            if (usedTokens + cost > budget) {
+                log.debug("Token budget exhausted at {} patterns (~{} tokens, budget={}). " +
+                          "Skipping '{}' (~{} tokens)",
+                        fitted.size(), usedTokens, budget, pattern.getTitle(), cost);
+                break;
+            }
+            fitted.add(pattern);
+            usedTokens += cost;
+        }
+
+        if (fitted.size() < sorted.size()) {
+            log.info("Token budget: packed {} of {} patterns (~{}/{} tokens, dropped {})",
+                    fitted.size(), sorted.size(), usedTokens, budget,
+                    sorted.size() - fitted.size());
+        } else {
+            log.debug("Token budget: all {} patterns fit (~{}/{} tokens)",
+                    fitted.size(), usedTokens, budget);
+        }
+
+        return new RetrievalResult(fitted, usedTokens);
     }
 
     /**

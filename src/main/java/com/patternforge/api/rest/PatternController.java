@@ -3,6 +3,7 @@ package com.patternforge.api.rest;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.patternforge.api.dto.*;
+import com.patternforge.config.RetrievalProperties;
 import com.patternforge.extraction.EmbeddingService;
 import com.patternforge.jooq.tables.records.PatternsRecord;
 import com.patternforge.llm.AnthropicApiException;
@@ -40,6 +41,7 @@ public class PatternController {
     private final PatternUsageService patternUsageService;
     private final PatternPromotionService patternPromotionService;
     private final PatternExtractionService patternExtractionService;
+    private final RetrievalProperties retrievalProperties;
     private final ObjectMapper objectMapper;
 
     @GetMapping("/health")
@@ -65,8 +67,10 @@ public class PatternController {
 
         TaskContext taskContext = taskAnalyzer.analyze(request.task(), request.language(), null);
 
-        List<RetrievedPattern> patterns = patternRetriever.retrieve(
+        PatternRetriever.RetrievalResult result = patternRetriever.retrieve(
             taskContext, topK, request.projectPath(), request.conversationId());
+
+        List<RetrievedPattern> patterns = result.patterns();
 
         WorkflowResponse workflow = workflowResolver.resolveWorkflow(
             taskContext.getTaskType(), request.task(), request.projectPath(), patterns);
@@ -74,7 +78,9 @@ public class PatternController {
         QueryMetadata metadata = new QueryMetadata(
             patterns.size(),
             taskContext.getTaskType(),
-            embeddingService.isAvailable() ? "semantic" : "keyword");
+            embeddingService.isAvailable() ? "semantic" : "keyword",
+            result.estimatedTokens(),
+            retrievalProperties.getMaxContextTokens());
 
         return ResponseEntity.ok(new PatternQueryResponse(patterns, workflow, metadata));
     }
