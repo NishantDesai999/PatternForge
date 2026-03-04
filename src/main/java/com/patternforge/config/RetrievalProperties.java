@@ -5,9 +5,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
- * Configuration properties for pattern retrieval and search tuning.
- * Controls similarity thresholds, result caps, and total response limits
- * to keep LLM context token usage under control.
+ * Configuration properties for the pattern retrieval pipeline.
+ *
+ * <p>Controls how many patterns are returned per query category and what the minimum
+ * similarity threshold is for vector search results. These limits exist to prevent
+ * the response payload from ballooning — returning every global standard on every
+ * query defeats the purpose of context-aware retrieval and drives up LLM token costs.
  */
 @Component
 @ConfigurationProperties(prefix = "patternforge.retrieval")
@@ -15,19 +18,23 @@ import org.springframework.stereotype.Component;
 public class RetrievalProperties {
 
     /**
-     * Minimum cosine similarity score (0.0–1.0) for vector search results.
-     * Patterns below this threshold are dropped even if they rank in the top-K.
+     * Maximum number of global standard patterns included in a query response.
+     * Patterns are selected by success_rate DESC so the most reliable ones come first.
+     * Default: 5 — sufficient context without flooding the LLM with irrelevant standards.
      */
-    private double similarityThreshold = 0.3;
+    private int maxGlobalStandards = 5;
 
     /**
-     * Maximum number of project-specific (conversational) patterns to return.
+     * Maximum number of project-specific standard patterns included in a query response.
+     * Default: 3.
      */
-    private int maxProjectPatterns = 5;
+    private int maxProjectStandards = 3;
 
     /**
-     * Hard upper limit on total patterns in a single query response.
-     * When exceeded, lowest-relevance patterns are trimmed first.
+     * Minimum cosine similarity score [0.0, 1.0] required for a vector search result
+     * to be included. Results below this threshold are discarded even if they are in
+     * the top-K by distance ordering.
+     * Default: 0.35 — filters out clearly unrelated patterns while keeping near matches.
      */
-    private int maxTotalPatterns = 20;
+    private double minSimilarityThreshold = 0.35;
 }

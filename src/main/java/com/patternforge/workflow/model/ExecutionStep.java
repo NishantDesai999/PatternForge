@@ -1,8 +1,5 @@
 package com.patternforge.workflow.model;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.patternforge.retrieval.model.RetrievedPattern;
-
 import java.util.List;
 import java.util.Map;
 
@@ -14,6 +11,11 @@ import lombok.NoArgsConstructor;
 /**
  * Individual step in workflow execution with pattern references and validation rules.
  * Supports both automated and manual approval steps.
+ *
+ * <p>Pattern data is intentionally NOT embedded here. The full patterns are already
+ * present in the enclosing {@code PatternQueryResponse.patterns} list. Referencing them
+ * by name avoids duplicating potentially large code-example payloads in every step,
+ * which was a primary driver of excessive LLM token usage.
  */
 @Data
 @Builder
@@ -25,8 +27,8 @@ public class ExecutionStep {
     private String tool;
     private String target;
     private List<String> patternReferences;
-    @JsonIgnore
-    private List<RetrievedPattern> resolvedPatterns;
+    /** Pattern names resolved for this step. Cross-reference with response-level patterns list. */
+    private List<String> resolvedPatternNames;
     private String validation;
     private String command;
     private String agent;

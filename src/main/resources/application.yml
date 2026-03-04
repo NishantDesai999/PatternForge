@@ -63,6 +63,12 @@ patternforge:
       - ${HOME}/.aider/workflows
       - ${HOME}/.patternforge/workflows
 
+  # Pattern retrieval limits — keep query payloads small to control LLM token costs
+  retrieval:
+    max-global-standards: 5       # top N globals by success_rate per query (was unbounded)
+    max-project-standards: 3      # top N project standards per query (was unbounded)
+    min-similarity-threshold: 0.35  # discard vector results below this cosine similarity
+
   # Pattern extraction via LLM
   extraction:
     # Anthropic model for pattern extraction (fallback if Ollama unavailable)
@@ -73,12 +79,6 @@ patternforge:
     ollama-model: llama3.3:latest
     # Prefer Ollama over Anthropic (set to false to always use Anthropic)
     prefer-ollama: true
-
-  # Pattern retrieval tuning — controls token usage in query responses
-  retrieval:
-    similarity-threshold: 0.3   # minimum cosine similarity for vector search results
-    max-project-patterns: 5     # cap on project-specific conversational patterns
-    max-total-patterns: 20      # hard upper limit on patterns per response
 
   # Auto-promotion scheduler
   promotion:

@@ -37,10 +37,11 @@ import lombok.extern.slf4j.Slf4j;
  * Uses semantic vector search when Ollama available, falls back to keyword search otherwise.
  * Also includes project-specific and conversational patterns when applicable.
  *
- * <p>Global standards are returned in <b>slim</b> format (title + category only, no description
- * or code examples) to minimize token usage. If a global standard is also task-relevant
- * (returned by vector/keyword search), the full-detail version replaces the slim entry during
- * deduplication.
+ * <p>Global standards (is_global_standard = true) are selected by task relevance when Ollama
+ * is available — only globals relevant to this task are included, capped by
+ * {@code RetrievalProperties.maxGlobalStandards}. When Ollama is unavailable the top globals
+ * by success_rate are used as a fallback. The topK limit applies separately to the
+ * semantic/keyword search for additional task-specific patterns.
  */
 @Service
 @RequiredArgsConstructor
@@ -55,20 +56,17 @@ public class PatternRetriever {
     private final PatternRepository patternRepository;
     private final ObjectMapper objectMapper;
     private final RetrievalProperties retrievalProperties;
-    
+
     /**
      * Retrieves relevant patterns for given task context.
      * Automatically selects vector or keyword search based on embedding service availability.
      * Also includes project-specific and conversational patterns when applicable.
      *
-     * <p>Global standards (is_global_standard = true) are always returned in <b>slim</b> format
-     * (title + category only) so the LLM sees every rule name without bloating the context.
-     * If a global standard is also returned by semantic/keyword search (i.e., it IS task-relevant),
-     * the full-detail version replaces the slim one during deduplication.
-     *
-     * <p>After deduplication, the total pattern count is capped at {@code maxTotalPatterns}
-     * (configured via {@code patternforge.retrieval.max-total-patterns}) to provide a hard
-     * upper bound on response size and therefore LLM token usage.
+     * <p>Global standards (is_global_standard = true) are selected by task relevance when Ollama
+     * is available — only globals relevant to this task are included, capped by
+     * {@code RetrievalProperties.maxGlobalStandards}. When Ollama is unavailable the top globals
+     * by success_rate are used as a fallback. The topK limit applies separately to the
+     * semantic/keyword search for additional task-specific patterns.
      *
      * @param taskContext The context describing the development task
      * @param topK Maximum number of patterns to retrieve from semantic/keyword search
@@ -82,19 +80,43 @@ public class PatternRetriever {
             return List.of();
         }
 
-        // Step 1: Always include ALL global standards in slim format (title + category only)
-        List<RetrievedPattern> globalStandards = retrieveSlimGlobalStandards();
-        log.debug("Retrieved {} global standard patterns (slim format)", globalStandards.size());
+        int globalCap = retrievalProperties.getMaxGlobalStandards();
+        String query = buildQuery(taskContext);
 
-        // Step 2: Get additional task-specific patterns using semantic/keyword search
-        List<RetrievedPattern> searchPatterns = retrieveGlobalPatterns(taskContext, topK);
+        // Generate embedding once and reuse for all vector queries (avoids duplicate Ollama calls).
+        // Uses search_query: prefix required by nomic-embed-text for query embeddings.
+        float[] embedding = null;
+        if (embeddingService.isAvailable()) {
+            embedding = embeddingService.generateQueryEmbedding(query);
+            if (Objects.isNull(embedding)) {
+                log.warn("Embedding generation returned null - falling back to keyword search");
+            }
+        }
+
+        // Step 1: Global standards — task-similarity aware when Ollama is available.
+        // DCP-inspired: only include a global standard if it's relevant to THIS task.
+        // When Ollama is unavailable, fall back to success_rate ordering (no detail lost).
+        List<RetrievedPattern> globalStandards;
+        if (Objects.nonNull(embedding)) {
+            globalStandards = vectorSearchService.searchGlobalStandards(embedding, taskContext.getLanguage(), globalCap);
+            log.debug("Retrieved {} task-relevant global standards via vector search (cap={})",
+                globalStandards.size(), globalCap);
+        } else {
+            globalStandards = retrieveTopGlobalStandards(globalCap);
+            log.debug("Retrieved {} global standard patterns via success_rate fallback (cap={})",
+                globalStandards.size(), globalCap);
+        }
+
+        // Step 2: Task-specific patterns — reuse embedding generated above
+        List<RetrievedPattern> searchPatterns = retrieveGlobalPatterns(embedding, query, taskContext, topK);
         log.debug("Retrieved {} task-specific patterns (topK={})", searchPatterns.size(), topK);
 
         // Step 3: Get project-specific patterns if projectPath provided (capped)
         List<RetrievedPattern> projectPatterns = new ArrayList<>();
         if (Objects.nonNull(projectPath) && !projectPath.isBlank()) {
-            projectPatterns = retrieveProjectPatterns(projectPath);
-            log.debug("Retrieved {} project-specific patterns", projectPatterns.size());
+            int projectCap = retrievalProperties.getMaxProjectStandards();
+            projectPatterns = retrieveProjectPatterns(projectPath, projectCap);
+            log.debug("Retrieved {} project-specific patterns (cap={})", projectPatterns.size(), projectCap);
         }
 
         // Step 4: Get conversational patterns if conversationId provided
@@ -108,7 +130,7 @@ public class PatternRetriever {
         List<RetrievedPattern> deduplicated = deduplicatePatterns(globalStandards, searchPatterns, projectPatterns, conversationalPatterns);
         return enforceTotalCap(deduplicated);
     }
-    
+
     /**
      * Legacy method for backward compatibility.
      * Retrieves top-k most relevant patterns using only global search.
@@ -120,37 +142,33 @@ public class PatternRetriever {
     public List<RetrievedPattern> retrieve(TaskContext taskContext, int topK) {
         return retrieve(taskContext, topK, null, null);
     }
-    
+
     /**
-     * Retrieves global patterns using semantic or keyword search.
-     * Vector search applies the configured similarity threshold to filter irrelevant results.
+     * Retrieves global patterns using the pre-computed embedding (or keyword fallback).
+     * Accepts the embedding generated in {@link #retrieve} to avoid a second Ollama call.
+     *
+     * @param embedding pre-computed query embedding, or null when Ollama is unavailable
+     * @param query     raw query string for keyword fallback
+     * @param taskContext task context for filters
+     * @param topK      maximum results to return
      */
-    private List<RetrievedPattern> retrieveGlobalPatterns(TaskContext taskContext, int topK) {
-        String query = buildQuery(taskContext);
-        log.debug("Built query from task context: {}", query);
-
-        if (embeddingService.isAvailable()) {
-            log.info("Using vector search for pattern retrieval");
-            float[] embedding = embeddingService.generateQueryEmbedding(query);
-
-            if (Objects.nonNull(embedding)) {
-                return vectorSearchService.search(
-                        embedding, taskContext, topK, retrievalProperties.getSimilarityThreshold());
-            }
-
-            log.warn("Embedding generation returned null - falling back to keyword search");
+    private List<RetrievedPattern> retrieveGlobalPatterns(float[] embedding, String query,
+                                                           TaskContext taskContext, int topK) {
+        if (Objects.nonNull(embedding)) {
+            log.info("Using vector search for task-specific pattern retrieval");
+            return vectorSearchService.search(embedding, taskContext, topK);
         }
 
-        log.info("Using keyword search for pattern retrieval");
+        log.info("Using keyword search for task-specific pattern retrieval");
         return keywordSearchService.search(query, taskContext, topK);
     }
-    
+
     /**
-     * Retrieves project-specific patterns for given project path.
-     * Capped to {@code maxProjectPatterns} most relevant conversational patterns.
-     * Includes their linked formal patterns when available.
+     * Retrieves up to {@code limit} project-specific patterns for given project path.
+     * Includes both conversational patterns promoted to project standards
+     * and their linked formal patterns.
      */
-    private List<RetrievedPattern> retrieveProjectPatterns(String projectPath) {
+    private List<RetrievedPattern> retrieveProjectPatterns(String projectPath, int limit) {
         Optional<ProjectsRecord> projectOpt = projectRepository.findByPath(projectPath);
 
         if (projectOpt.isEmpty()) {
@@ -159,72 +177,60 @@ public class PatternRetriever {
         }
 
         UUID projectId = projectOpt.get().getProjectId();
-        int maxProjectPatterns = retrievalProperties.getMaxProjectPatterns();
-        List<ConversationalPatternsRecord> projectStandards =
-            conversationalPatternRepository.findByProjectId(projectId, maxProjectPatterns);
+        List<ConversationalPatternsRecord> conversationalPatterns =
+            conversationalPatternRepository.findByProjectId(projectId);
+
+        // Include ALL conversational patterns for this project (is_project_standard is for
+        // analytics/tracking only, not a filter gate), but cap total to avoid unbounded growth.
+        List<ConversationalPatternsRecord> projectStandards = conversationalPatterns.stream()
+            .limit(limit)
+            .collect(Collectors.toList());
 
         log.debug("Found {} project patterns for project {} (cap={})",
-                projectStandards.size(), projectId, maxProjectPatterns);
-        
+            projectStandards.size(), projectId, limit);
+
         List<RetrievedPattern> results = new ArrayList<>();
-        
+
         // Add conversational patterns as retrieved patterns
         for (ConversationalPatternsRecord conversationalPattern : projectStandards) {
             results.add(convertConversationalToRetrieved(conversationalPattern, "project_standard"));
-            
+
             // If linked to formal pattern, retrieve that too
             if (Objects.nonNull(conversationalPattern.getFormalPatternId())) {
-                Optional<PatternsRecord> formalPattern = 
+                Optional<PatternsRecord> formalPattern =
                     patternRepository.findById(conversationalPattern.getFormalPatternId());
-                
-                formalPattern.ifPresent(pattern -> 
+
+                formalPattern.ifPresent(pattern ->
                     results.add(convertFormalToRetrieved(pattern, "project_standard_formal"))
                 );
             }
         }
-        
+
         return results;
     }
-    
+
     /**
      * Retrieves conversational patterns from current session.
      */
     private List<RetrievedPattern> retrieveConversationalPatterns(String conversationId) {
-        List<ConversationalPatternsRecord> sessionPatterns = 
+        List<ConversationalPatternsRecord> sessionPatterns =
             conversationalPatternRepository.findByConversationId(conversationId);
-        
-        log.debug("Found {} conversational patterns for conversation {}", 
+
+        log.debug("Found {} conversational patterns for conversation {}",
             sessionPatterns.size(), conversationId);
-        
+
         return sessionPatterns.stream()
             .map(cp -> convertConversationalToRetrieved(cp, "session_pattern"))
             .collect(Collectors.toList());
     }
-    
+
     /**
-     * Fetches ALL patterns marked is_global_standard = true in <b>slim</b> format.
-     * Only {@code patternId}, {@code patternName}, {@code title}, and {@code category} are populated.
-     * Heavy fields ({@code description}, {@code codeExamples}, {@code whenToUse}) are set to null.
-     *
-     * <p>This keeps the LLM aware of every standard name while consuming minimal tokens (~200 bytes
-     * per pattern vs 3-8KB for full detail). If the pattern also appears in semantic/keyword search
-     * results, the full-detail version will overwrite this slim entry during deduplication.
+     * Fetches the top {@code limit} global standard patterns ordered by success_rate DESC.
+     * Relevance score is set to 1.0 so they sort before task-specific results.
      */
-    private List<RetrievedPattern> retrieveSlimGlobalStandards() {
-        return patternRepository.findGlobalPatterns().stream()
-                .map(record -> RetrievedPattern.builder()
-                        .patternId(record.getPatternId().toString())
-                        .patternName(record.getPatternName())
-                        .title(record.getTitle())
-                        .description(null)
-                        .category(record.getCategory())
-                        .whenToUse(null)
-                        .codeExamples(null)
-                        .relevanceScore(1.0)
-                        .successRate(Objects.nonNull(record.getSuccessRate()) ? record.getSuccessRate() : 0.0)
-                        .workflowId(Objects.nonNull(record.getWorkflowId()) ? record.getWorkflowId().toString() : null)
-                        .patternData(Map.of("retrieval_reason", "global_standard", "format", "slim"))
-                        .build())
+    private List<RetrievedPattern> retrieveTopGlobalStandards(int limit) {
+        return patternRepository.findGlobalPatterns(limit).stream()
+                .map(record -> convertFormalToRetrieved(record, "global_standard"))
                 .collect(Collectors.toList());
     }
 
@@ -233,12 +239,13 @@ public class PatternRetriever {
      * Keeps patterns sorted by relevance score descending; lowest-relevance patterns are trimmed.
      */
     private List<RetrievedPattern> enforceTotalCap(List<RetrievedPattern> patterns) {
-        int maxTotal = retrievalProperties.getMaxTotalPatterns();
-        if (maxTotal <= 0 || patterns.size() <= maxTotal) {
+        int maxTotal = retrievalProperties.getMaxGlobalStandards()
+                + retrievalProperties.getMaxProjectStandards() + 10;
+        if (patterns.size() <= maxTotal) {
             return patterns;
         }
 
-        log.info("Enforcing total cap: {} patterns → {} (trimming {} lowest-relevance)",
+        log.info("Enforcing total cap: {} patterns -> {} (trimming {} lowest-relevance)",
                 patterns.size(), maxTotal, patterns.size() - maxTotal);
 
         return patterns.stream()
@@ -280,45 +287,45 @@ public class PatternRetriever {
 
         return deduplicated;
     }
-    
+
     /**
      * Converts a ConversationalPatternsRecord to RetrievedPattern format.
      */
     private RetrievedPattern convertConversationalToRetrieved(
-            ConversationalPatternsRecord conversationalPattern, 
+            ConversationalPatternsRecord conversationalPattern,
             String retrievalReason) {
-        
+
         // Use conversation pattern ID as pattern_id if no formal pattern linked
         String patternId = Objects.nonNull(conversationalPattern.getFormalPatternId())
             ? conversationalPattern.getFormalPatternId().toString()
             : conversationalPattern.getId().toString();
-        
+
         // Create code examples map if code_example exists
         Map<String, String> codeExamples = new HashMap<>();
-        if (Objects.nonNull(conversationalPattern.getCodeExample()) 
+        if (Objects.nonNull(conversationalPattern.getCodeExample())
                 && !conversationalPattern.getCodeExample().isBlank()) {
             codeExamples.put("example", conversationalPattern.getCodeExample());
         }
-        
+
         return RetrievedPattern.builder()
             .patternId(patternId)
             .patternName("conversational_" + conversationalPattern.getId())
             .title(retrievalReason.replace("_", " ").toUpperCase())
             .description(conversationalPattern.getDescription())
             .category("conversational")
-            .whenToUse(Objects.nonNull(conversationalPattern.getRationale()) 
-                ? conversationalPattern.getRationale() 
+            .whenToUse(Objects.nonNull(conversationalPattern.getRationale())
+                ? conversationalPattern.getRationale()
                 : "Project-specific or session-specific pattern")
             .codeExamples(codeExamples)
             .relevanceScore(1.0)  // High priority
-            .successRate(Objects.nonNull(conversationalPattern.getConfidence()) 
-                ? conversationalPattern.getConfidence() 
+            .successRate(Objects.nonNull(conversationalPattern.getConfidence())
+                ? conversationalPattern.getConfidence()
                 : 0.0)
             .workflowId(null)
             .patternData(Map.of(
                 "retrieval_reason", retrievalReason,
-                "source", Objects.nonNull(conversationalPattern.getSource()) 
-                    ? conversationalPattern.getSource() 
+                "source", Objects.nonNull(conversationalPattern.getSource())
+                    ? conversationalPattern.getSource()
                     : "unknown",
                 "promotion_count", Objects.nonNull(conversationalPattern.getPromotionCount())
                     ? conversationalPattern.getPromotionCount()
@@ -326,7 +333,7 @@ public class PatternRetriever {
             ))
             .build();
     }
-    
+
     /**
      * Converts a PatternsRecord to RetrievedPattern format.
      * Used when retrieving formal patterns linked to conversational patterns.
@@ -336,7 +343,7 @@ public class PatternRetriever {
         if (Objects.nonNull(pattern.getCodeExamples())) {
             codeExamples = parseCodeExamples(pattern.getCodeExamples());
         }
-        
+
         return RetrievedPattern.builder()
             .patternId(pattern.getPatternId().toString())
             .patternName(pattern.getPatternName())
@@ -346,23 +353,23 @@ public class PatternRetriever {
             .whenToUse(pattern.getWhenToUse())
             .codeExamples(codeExamples)
             .relevanceScore(1.0)  // High priority for project standards
-            .successRate(Objects.nonNull(pattern.getSuccessRate()) 
-                ? pattern.getSuccessRate() 
+            .successRate(Objects.nonNull(pattern.getSuccessRate())
+                ? pattern.getSuccessRate()
                 : 0.0)
-            .workflowId(Objects.nonNull(pattern.getWorkflowId()) 
-                ? pattern.getWorkflowId().toString() 
+            .workflowId(Objects.nonNull(pattern.getWorkflowId())
+                ? pattern.getWorkflowId().toString()
                 : null)
             .patternData(Map.of("retrieval_reason", retrievalReason))
             .build();
     }
-    
+
     /**
      * Parses JSONB code examples to Map<String, String>.
      */
     private Map<String, String> parseCodeExamples(JSONB codeExamplesJsonb) {
         try {
             return objectMapper.readValue(
-                codeExamplesJsonb.data(), 
+                codeExamplesJsonb.data(),
                 new TypeReference<Map<String, String>>() {}
             );
         } catch (Exception exception) {
@@ -370,7 +377,7 @@ public class PatternRetriever {
             return new HashMap<>();
         }
     }
-    
+
     /**
      * Builds searchable query text from task context.
      * Uses the raw task description as the primary semantic signal. Appending heuristic

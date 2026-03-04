@@ -142,10 +142,10 @@ class WorkflowResolverIntegrationTest extends AbstractIntegrationTest {
         );
 
         assertThat(result.getSteps()).isNotEmpty();
-        // At least one step should have resolved patterns
-        boolean hasResolvedPattern = result.getSteps().stream()
-                .anyMatch(s -> s.getResolvedPatterns() != null && !s.getResolvedPatterns().isEmpty());
-        assertThat(hasResolvedPattern).isTrue();
+        // At least one step should have resolved pattern names (names only, not full objects)
+        boolean hasResolvedPatternName = result.getSteps().stream()
+                .anyMatch(s -> s.getResolvedPatternNames() != null && !s.getResolvedPatternNames().isEmpty());
+        assertThat(hasResolvedPatternName).isTrue();
     }
 
     @Test

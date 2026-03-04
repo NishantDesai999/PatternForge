@@ -71,6 +71,35 @@ public class PatternRepository {
             .fetch();
     }
 
+    /**
+     * Returns the top {@code limit} global standard patterns ordered by success rate descending.
+     * Use this in query paths to avoid returning every global standard on every request.
+     */
+    public List<PatternsRecord> findGlobalPatterns(int limit) {
+        return dsl.selectFrom(PATTERNS)
+            .where(PATTERNS.IS_GLOBAL_STANDARD.isTrue())
+            .orderBy(PATTERNS.SUCCESS_RATE.desc().nullsLast())
+            .limit(limit)
+            .fetch();
+    }
+
+    /**
+     * Returns up to {@code limit} project-standard patterns whose source path references
+     * {@code projectPath}, ordered by success rate descending.
+     */
+    public List<PatternsRecord> findProjectPatterns(String projectPath, int limit) {
+        if (Objects.isNull(projectPath) || projectPath.isBlank()) {
+            return List.of();
+        }
+        return dsl.selectFrom(PATTERNS)
+            .where(PATTERNS.IS_PROJECT_STANDARD.isTrue())
+            .and(PATTERNS.IS_GLOBAL_STANDARD.isFalse())
+            .and(PATTERNS.SOURCE.like("%" + projectPath + "%"))
+            .orderBy(PATTERNS.SUCCESS_RATE.desc().nullsLast())
+            .limit(limit)
+            .fetch();
+    }
+
     public List<PatternsRecord> findProjectStandardsNotGlobal() {
         return dsl.selectFrom(PATTERNS)
             .where(PATTERNS.IS_PROJECT_STANDARD.isTrue())
