@@ -68,6 +68,7 @@ patternforge:
     max-global-standards: 5       # top N globals by success_rate per query (was unbounded)
     max-project-standards: 3      # top N project standards per query (was unbounded)
     min-similarity-threshold: 0.35  # discard vector results below this cosine similarity
+    max-context-tokens: 8000      # token budget — patterns packed greedily by relevance until exhausted (0 to disable)
 
   # Pattern extraction via LLM
   extraction:
@@ -79,6 +80,10 @@ patternforge:
     ollama-model: llama3.3:latest
     # Prefer Ollama over Anthropic (set to false to always use Anthropic)
     prefer-ollama: true
+
+  # Auto-promotion scheduler
+  promotion:
+    interval-ms: 3600000  # 1 hour — how often to check for promotable patterns
 
   # Anthropic API client
   anthropic:

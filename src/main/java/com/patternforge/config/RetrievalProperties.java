@@ -37,4 +37,12 @@ public class RetrievalProperties {
      * Default: 0.35 — filters out clearly unrelated patterns while keeping near matches.
      */
     private double minSimilarityThreshold = 0.35;
+
+    /**
+     * Maximum estimated token budget for patterns in a single query response.
+     * Patterns are packed greedily by relevance score until this budget is exhausted.
+     * Set to 0 to disable token budgeting (fall back to count-based caps only).
+     * Default: 8000 — keeps pattern context well within a single LLM message.
+     */
+    private int maxContextTokens = 8000;
 }

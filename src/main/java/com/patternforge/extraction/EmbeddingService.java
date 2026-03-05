@@ -65,17 +65,44 @@ public class EmbeddingService {
     }
     
     /**
-     * Generates embedding vector for given text.
-     * Returns null if Ollama unavailable (triggers keyword fallback).
+     * Generates embedding vector for given text (no task prefix).
+     * Prefer {@link #generateQueryEmbedding(String)} or {@link #generateDocumentEmbedding(String)}
+     * for nomic-embed-text which requires task prefixes for optimal retrieval quality.
      *
      * @param text The text to embed
      * @return Embedding vector or null if unavailable
      */
     public float[] generateEmbedding(String text) {
+        return embed(text);
+    }
+
+    /**
+     * Generates embedding for a search query.
+     * Prepends "search_query: " prefix required by nomic-embed-text for query embeddings.
+     *
+     * @param queryText The query text to embed
+     * @return Embedding vector or null if unavailable
+     */
+    public float[] generateQueryEmbedding(String queryText) {
+        return embed("search_query: " + queryText);
+    }
+
+    /**
+     * Generates embedding for a document to be stored and searched against.
+     * Prepends "search_document: " prefix required by nomic-embed-text for document embeddings.
+     *
+     * @param documentText The document text to embed
+     * @return Embedding vector or null if unavailable
+     */
+    public float[] generateDocumentEmbedding(String documentText) {
+        return embed("search_document: " + documentText);
+    }
+
+    private float[] embed(String text) {
         if (!ollamaAvailable.get()) {
             return null;
         }
-        
+
         try {
             EmbeddingRequest request = new EmbeddingRequest(ollamaModel, text);
             EmbeddingResponse response = webClient.post()
@@ -85,7 +112,7 @@ public class EmbeddingService {
                 .bodyToMono(EmbeddingResponse.class)
                 .timeout(Duration.ofMillis(timeout))
                 .block();
-            
+
             return Objects.nonNull(response) ? response.embedding() : null;
         } catch (Exception exception) {
             log.debug("Embedding unavailable - using keyword search");

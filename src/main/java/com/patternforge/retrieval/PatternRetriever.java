@@ -1,6 +1,7 @@
 package com.patternforge.retrieval;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,12 +36,16 @@ import lombok.extern.slf4j.Slf4j;
  * Retrieves relevant patterns based on task context.
  * Uses semantic vector search when Ollama available, falls back to keyword search otherwise.
  * Also includes project-specific and conversational patterns when applicable.
+ *
+ * <p>After deduplication, patterns are packed greedily by relevance score into a configurable
+ * token budget ({@code patternforge.retrieval.max-context-tokens}). This ensures the response
+ * stays within the LLM's effective context regardless of how large individual patterns are.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class PatternRetriever {
-    
+
     private final EmbeddingService embeddingService;
     private final VectorSearchService vectorSearchService;
     private final KeywordSearchService keywordSearchService;
@@ -49,45 +54,46 @@ public class PatternRetriever {
     private final PatternRepository patternRepository;
     private final ObjectMapper objectMapper;
     private final RetrievalProperties retrievalProperties;
-    
+
     /**
-     * Retrieves relevant patterns for given task context.
-     * Automatically selects vector or keyword search based on embedding service availability.
-     * Also includes project-specific and conversational patterns when applicable.
+     * Result of a retrieval operation, carrying both the patterns and token accounting.
+     */
+    public record RetrievalResult(List<RetrievedPattern> patterns, int estimatedTokens) {}
+
+    /**
+     * Retrieves relevant patterns for given task context, fitting them within a token budget.
      *
-     * <p>Global standards (is_global_standard = true) are selected by task relevance when Ollama
-     * is available — only globals relevant to this task are included, capped by
-     * {@code RetrievalProperties.maxGlobalStandards}. When Ollama is unavailable the top globals
-     * by success_rate are used as a fallback. The topK limit applies separately to the
-     * semantic/keyword search for additional task-specific patterns.
+     * <p>Patterns are gathered from four sources (global standards, task-specific search,
+     * project patterns, conversational patterns), deduplicated, sorted by relevance, then
+     * greedily packed into the configured token budget. This ensures the JSON payload stays
+     * predictable regardless of how large individual patterns are.
      *
      * @param taskContext The context describing the development task
      * @param topK Maximum number of patterns to retrieve from semantic/keyword search
      * @param projectPath Optional project path to include project-specific patterns
      * @param conversationId Optional conversation ID to include session patterns
-     * @return List of retrieved patterns ranked by relevance
+     * @return RetrievalResult with patterns and estimated token usage
      */
-    public List<RetrievedPattern> retrieve(TaskContext taskContext, int topK, String projectPath, String conversationId) {
+    public RetrievalResult retrieve(TaskContext taskContext, int topK, String projectPath, String conversationId) {
         if (Objects.isNull(taskContext)) {
             log.warn("TaskContext is null - returning empty results");
-            return List.of();
+            return new RetrievalResult(List.of(), 0);
         }
 
         int globalCap = retrievalProperties.getMaxGlobalStandards();
         String query = buildQuery(taskContext);
 
-        // Generate embedding once and reuse for all vector queries (avoids duplicate Ollama calls)
+        // Generate embedding once and reuse for all vector queries (avoids duplicate Ollama calls).
+        // Uses search_query: prefix required by nomic-embed-text for query embeddings.
         float[] embedding = null;
         if (embeddingService.isAvailable()) {
-            embedding = embeddingService.generateEmbedding(query);
+            embedding = embeddingService.generateQueryEmbedding(query);
             if (Objects.isNull(embedding)) {
                 log.warn("Embedding generation returned null - falling back to keyword search");
             }
         }
 
         // Step 1: Global standards — task-similarity aware when Ollama is available.
-        // DCP-inspired: only include a global standard if it's relevant to THIS task.
-        // When Ollama is unavailable, fall back to success_rate ordering (no detail lost).
         List<RetrievedPattern> globalStandards;
         if (Objects.nonNull(embedding)) {
             globalStandards = vectorSearchService.searchGlobalStandards(embedding, taskContext.getLanguage(), globalCap);
@@ -103,7 +109,7 @@ public class PatternRetriever {
         List<RetrievedPattern> searchPatterns = retrieveGlobalPatterns(embedding, query, taskContext, topK);
         log.debug("Retrieved {} task-specific patterns (topK={})", searchPatterns.size(), topK);
 
-        // Step 3: Get project-specific patterns if projectPath provided
+        // Step 3: Get project-specific patterns if projectPath provided (capped)
         List<RetrievedPattern> projectPatterns = new ArrayList<>();
         if (Objects.nonNull(projectPath) && !projectPath.isBlank()) {
             int projectCap = retrievalProperties.getMaxProjectStandards();
@@ -118,22 +124,23 @@ public class PatternRetriever {
             log.debug("Retrieved {} conversational patterns", conversationalPatterns.size());
         }
 
-        // Step 5: Combine and deduplicate by pattern_id
-        return deduplicatePatterns(globalStandards, searchPatterns, projectPatterns, conversationalPatterns);
+        // Step 5: Combine, deduplicate, and fit within token budget
+        List<RetrievedPattern> deduplicated = deduplicatePatterns(globalStandards, searchPatterns, projectPatterns, conversationalPatterns);
+        return fitWithinTokenBudget(deduplicated);
     }
-    
+
     /**
      * Legacy method for backward compatibility.
      * Retrieves top-k most relevant patterns using only global search.
      *
      * @param taskContext The context describing the development task
      * @param topK Maximum number of patterns to retrieve
-     * @return List of retrieved patterns ranked by relevance
+     * @return RetrievalResult with patterns and estimated token usage
      */
-    public List<RetrievedPattern> retrieve(TaskContext taskContext, int topK) {
+    public RetrievalResult retrieve(TaskContext taskContext, int topK) {
         return retrieve(taskContext, topK, null, null);
     }
-    
+
     /**
      * Retrieves global patterns using the pre-computed embedding (or keyword fallback).
      * Accepts the embedding generated in {@link #retrieve} to avoid a second Ollama call.
@@ -153,7 +160,7 @@ public class PatternRetriever {
         log.info("Using keyword search for task-specific pattern retrieval");
         return keywordSearchService.search(query, taskContext, topK);
     }
-    
+
     /**
      * Retrieves up to {@code limit} project-specific patterns for given project path.
      * Includes both conversational patterns promoted to project standards
@@ -180,7 +187,6 @@ public class PatternRetriever {
         log.debug("Found {} project patterns for project {} (cap={})",
             projectStandards.size(), projectId, limit);
 
-
         List<RetrievedPattern> results = new ArrayList<>();
 
         // Add conversational patterns as retrieved patterns
@@ -200,22 +206,22 @@ public class PatternRetriever {
 
         return results;
     }
-    
+
     /**
      * Retrieves conversational patterns from current session.
      */
     private List<RetrievedPattern> retrieveConversationalPatterns(String conversationId) {
-        List<ConversationalPatternsRecord> sessionPatterns = 
+        List<ConversationalPatternsRecord> sessionPatterns =
             conversationalPatternRepository.findByConversationId(conversationId);
-        
-        log.debug("Found {} conversational patterns for conversation {}", 
+
+        log.debug("Found {} conversational patterns for conversation {}",
             sessionPatterns.size(), conversationId);
-        
+
         return sessionPatterns.stream()
             .map(cp -> convertConversationalToRetrieved(cp, "session_pattern"))
             .collect(Collectors.toList());
     }
-    
+
     /**
      * Fetches the top {@code limit} global standard patterns ordered by success_rate DESC.
      * Relevance score is set to 1.0 so they sort before task-specific results.
@@ -224,6 +230,60 @@ public class PatternRetriever {
         return patternRepository.findGlobalPatterns(limit).stream()
                 .map(record -> convertFormalToRetrieved(record, "global_standard"))
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Packs patterns greedily by relevance score into the configured token budget.
+     *
+     * <p>Patterns are sorted by relevance (highest first). Each pattern's estimated token
+     * cost is computed via {@link TokenEstimator}. Patterns are added until the next one
+     * would exceed the budget. If budgeting is disabled ({@code maxContextTokens <= 0}),
+     * all patterns are returned with their total token estimate.
+     *
+     * @param patterns deduplicated candidate patterns
+     * @return RetrievalResult with the fitted list and total estimated tokens
+     */
+    private RetrievalResult fitWithinTokenBudget(List<RetrievedPattern> patterns) {
+        int budget = retrievalProperties.getMaxContextTokens();
+
+        // Sort by relevance descending so highest-value patterns are packed first
+        List<RetrievedPattern> sorted = patterns.stream()
+                .sorted(Comparator.comparingDouble(RetrievedPattern::getRelevanceScore).reversed())
+                .collect(Collectors.toList());
+
+        // If budgeting is disabled, return everything with token accounting
+        if (budget <= 0) {
+            int totalTokens = sorted.stream().mapToInt(TokenEstimator::estimate).sum();
+            log.info("Token budgeting disabled — returning all {} patterns (~{} tokens)",
+                    sorted.size(), totalTokens);
+            return new RetrievalResult(sorted, totalTokens);
+        }
+
+        List<RetrievedPattern> fitted = new ArrayList<>();
+        int usedTokens = 0;
+
+        for (RetrievedPattern pattern : sorted) {
+            int cost = TokenEstimator.estimate(pattern);
+            if (usedTokens + cost > budget) {
+                log.debug("Token budget exhausted at {} patterns (~{} tokens, budget={}). " +
+                          "Skipping '{}' (~{} tokens)",
+                        fitted.size(), usedTokens, budget, pattern.getTitle(), cost);
+                break;
+            }
+            fitted.add(pattern);
+            usedTokens += cost;
+        }
+
+        if (fitted.size() < sorted.size()) {
+            log.info("Token budget: packed {} of {} patterns (~{}/{} tokens, dropped {})",
+                    fitted.size(), sorted.size(), usedTokens, budget,
+                    sorted.size() - fitted.size());
+        } else {
+            log.debug("Token budget: all {} patterns fit (~{}/{} tokens)",
+                    fitted.size(), usedTokens, budget);
+        }
+
+        return new RetrievalResult(fitted, usedTokens);
     }
 
     /**
@@ -259,45 +319,45 @@ public class PatternRetriever {
 
         return deduplicated;
     }
-    
+
     /**
      * Converts a ConversationalPatternsRecord to RetrievedPattern format.
      */
     private RetrievedPattern convertConversationalToRetrieved(
-            ConversationalPatternsRecord conversationalPattern, 
+            ConversationalPatternsRecord conversationalPattern,
             String retrievalReason) {
-        
+
         // Use conversation pattern ID as pattern_id if no formal pattern linked
         String patternId = Objects.nonNull(conversationalPattern.getFormalPatternId())
             ? conversationalPattern.getFormalPatternId().toString()
             : conversationalPattern.getId().toString();
-        
+
         // Create code examples map if code_example exists
         Map<String, String> codeExamples = new HashMap<>();
-        if (Objects.nonNull(conversationalPattern.getCodeExample()) 
+        if (Objects.nonNull(conversationalPattern.getCodeExample())
                 && !conversationalPattern.getCodeExample().isBlank()) {
             codeExamples.put("example", conversationalPattern.getCodeExample());
         }
-        
+
         return RetrievedPattern.builder()
             .patternId(patternId)
             .patternName("conversational_" + conversationalPattern.getId())
             .title(retrievalReason.replace("_", " ").toUpperCase())
             .description(conversationalPattern.getDescription())
             .category("conversational")
-            .whenToUse(Objects.nonNull(conversationalPattern.getRationale()) 
-                ? conversationalPattern.getRationale() 
+            .whenToUse(Objects.nonNull(conversationalPattern.getRationale())
+                ? conversationalPattern.getRationale()
                 : "Project-specific or session-specific pattern")
             .codeExamples(codeExamples)
             .relevanceScore(1.0)  // High priority
-            .successRate(Objects.nonNull(conversationalPattern.getConfidence()) 
-                ? conversationalPattern.getConfidence() 
+            .successRate(Objects.nonNull(conversationalPattern.getConfidence())
+                ? conversationalPattern.getConfidence()
                 : 0.0)
             .workflowId(null)
             .patternData(Map.of(
                 "retrieval_reason", retrievalReason,
-                "source", Objects.nonNull(conversationalPattern.getSource()) 
-                    ? conversationalPattern.getSource() 
+                "source", Objects.nonNull(conversationalPattern.getSource())
+                    ? conversationalPattern.getSource()
                     : "unknown",
                 "promotion_count", Objects.nonNull(conversationalPattern.getPromotionCount())
                     ? conversationalPattern.getPromotionCount()
@@ -305,7 +365,7 @@ public class PatternRetriever {
             ))
             .build();
     }
-    
+
     /**
      * Converts a PatternsRecord to RetrievedPattern format.
      * Used when retrieving formal patterns linked to conversational patterns.
@@ -315,7 +375,7 @@ public class PatternRetriever {
         if (Objects.nonNull(pattern.getCodeExamples())) {
             codeExamples = parseCodeExamples(pattern.getCodeExamples());
         }
-        
+
         return RetrievedPattern.builder()
             .patternId(pattern.getPatternId().toString())
             .patternName(pattern.getPatternName())
@@ -325,23 +385,23 @@ public class PatternRetriever {
             .whenToUse(pattern.getWhenToUse())
             .codeExamples(codeExamples)
             .relevanceScore(1.0)  // High priority for project standards
-            .successRate(Objects.nonNull(pattern.getSuccessRate()) 
-                ? pattern.getSuccessRate() 
+            .successRate(Objects.nonNull(pattern.getSuccessRate())
+                ? pattern.getSuccessRate()
                 : 0.0)
-            .workflowId(Objects.nonNull(pattern.getWorkflowId()) 
-                ? pattern.getWorkflowId().toString() 
+            .workflowId(Objects.nonNull(pattern.getWorkflowId())
+                ? pattern.getWorkflowId().toString()
                 : null)
             .patternData(Map.of("retrieval_reason", retrievalReason))
             .build();
     }
-    
+
     /**
      * Parses JSONB code examples to Map<String, String>.
      */
     private Map<String, String> parseCodeExamples(JSONB codeExamplesJsonb) {
         try {
             return objectMapper.readValue(
-                codeExamplesJsonb.data(), 
+                codeExamplesJsonb.data(),
                 new TypeReference<Map<String, String>>() {}
             );
         } catch (Exception exception) {
@@ -349,44 +409,34 @@ public class PatternRetriever {
             return new HashMap<>();
         }
     }
-    
+
     /**
-     * Builds searchable query text from task context components.
-     * Combines taskType, components, and concerns into single searchable string.
+     * Builds searchable query text from task context.
+     * Uses the raw task description as the primary semantic signal. Appending heuristic
+     * keywords (taskType, components, concerns) was found to degrade embedding quality
+     * by pushing the vector away from the user's actual intent.
+     *
+     * <p>Language/framework are still appended when present because they are strong
+     * disambiguation signals (e.g., "java" vs "python" patterns) without adding noise.
      *
      * @param taskContext The task context to convert
      * @return Query string for search
      */
     private String buildQuery(TaskContext taskContext) {
         StringBuilder queryBuilder = new StringBuilder();
-        
-        // CRITICAL: Include original description for better keyword matching
+
         if (Objects.nonNull(taskContext.getDescription()) && !taskContext.getDescription().isBlank()) {
-            queryBuilder.append(taskContext.getDescription()).append(" ");
+            queryBuilder.append(taskContext.getDescription());
         }
-        
-        if (Objects.nonNull(taskContext.getTaskType())) {
-            queryBuilder.append(taskContext.getTaskType()).append(" ");
-        }
-        
-        if (Objects.nonNull(taskContext.getComponents()) && !taskContext.getComponents().isEmpty()) {
-            String componentsText = String.join(" ", taskContext.getComponents());
-            queryBuilder.append(componentsText).append(" ");
-        }
-        
-        if (Objects.nonNull(taskContext.getConcerns()) && !taskContext.getConcerns().isEmpty()) {
-            String concernsText = String.join(" ", taskContext.getConcerns());
-            queryBuilder.append(concernsText).append(" ");
-        }
-        
+
         if (Objects.nonNull(taskContext.getLanguage())) {
-            queryBuilder.append(taskContext.getLanguage()).append(" ");
+            queryBuilder.append(" ").append(taskContext.getLanguage());
         }
-        
+
         if (Objects.nonNull(taskContext.getFramework())) {
-            queryBuilder.append(taskContext.getFramework());
+            queryBuilder.append(" ").append(taskContext.getFramework());
         }
-        
+
         return queryBuilder.toString().trim();
     }
 }

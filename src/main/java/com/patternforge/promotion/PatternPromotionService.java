@@ -232,7 +232,7 @@ public class PatternPromotionService {
                 Objects.nonNull(conversational.getCodeExample()) ? conversational.getCodeExample() : ""
             );
             
-            float[] embedding = embeddingService.generateEmbedding(embeddingText);
+            float[] embedding = embeddingService.generateDocumentEmbedding(embeddingText);
             if (Objects.nonNull(embedding)) {
                 patternRepository.updateEmbedding(pattern.getPatternId(), embedding);
             }

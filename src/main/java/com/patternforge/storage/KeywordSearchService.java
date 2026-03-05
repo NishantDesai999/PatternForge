@@ -71,31 +71,8 @@ public class KeywordSearchService {
         
         log.debug("Found {} patterns matching query '{}'", results.size(), query);
         
-        // Fallback: return limited patterns if no results found
         if (results.isEmpty()) {
-            log.warn("No patterns matched query '{}', returning limited patterns as fallback", query);
-            results = dsl.select(
-                    PATTERNS.PATTERN_ID,
-                    PATTERNS.PATTERN_NAME,
-                    PATTERNS.TITLE,
-                    PATTERNS.DESCRIPTION,
-                    PATTERNS.CATEGORY,
-                    PATTERNS.WHEN_TO_USE,
-                    PATTERNS.CODE_EXAMPLES,
-                    PATTERNS.SUCCESS_RATE,
-                    PATTERNS.WORKFLOW_ID,
-                    DSL.val(0.3).as("rank")
-                )
-                .from(PATTERNS)
-                .where(buildFilters(context))
-                .orderBy(PATTERNS.PATTERN_NAME.asc())
-                .limit(topK)
-                .fetch()
-                .stream()
-                .map(this::mapToRetrievedPattern)
-                .toList();
-            
-            log.debug("Fallback returned {} patterns", results.size());
+            log.info("No patterns matched query '{}', returning empty (no random fallback)", query);
         }
         
         return results;

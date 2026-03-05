@@ -35,14 +35,24 @@ public class VectorSearchService {
     private final RetrievalProperties retrievalProperties;
     
     /**
-     * Searches patterns using vector similarity.
-     * 
-     * @param queryEmbedding 768-dimensional embedding vector
-     * @param context Task context with optional language filter
-     * @param topK Number of top results to return
-     * @return List of patterns ordered by similarity (highest first)
+     * Searches patterns using vector similarity (no threshold — returns all top-K).
+     * Backward-compatible overload.
      */
     public List<RetrievedPattern> search(float[] queryEmbedding, TaskContext context, int topK) {
+        return search(queryEmbedding, context, topK, 0.0);
+    }
+
+    /**
+     * Searches patterns using vector similarity with a minimum similarity threshold.
+     * Patterns below the threshold are dropped even if they fall within top-K.
+     *
+     * @param queryEmbedding      768-dimensional embedding vector
+     * @param context             Task context with optional language filter
+     * @param topK                Number of top results to return
+     * @param similarityThreshold Minimum similarity score (0.0–1.0); patterns below this are excluded
+     * @return List of patterns ordered by similarity (highest first), filtered by threshold
+     */
+    public List<RetrievedPattern> search(float[] queryEmbedding, TaskContext context, int topK, double similarityThreshold) {
         String vectorStr = VectorUtils.toPostgresVector(queryEmbedding);
         double minSimilarity = retrievalProperties.getMinSimilarityThreshold();
 
@@ -71,10 +81,10 @@ public class VectorSearchService {
                 if (Objects.nonNull(codeExamplesJsonb)) {
                     codeExamples = parseCodeExamples(codeExamplesJsonb.data());
                 }
-                
+
                 Double similarity = record.get("similarity", Double.class);
                 Double successRate = record.get(PATTERNS.SUCCESS_RATE);
-                
+
                 return RetrievedPattern.builder()
                     .patternId(record.get(PATTERNS.PATTERN_ID).toString())
                     .patternName(record.get(PATTERNS.PATTERN_NAME))
@@ -88,8 +98,18 @@ public class VectorSearchService {
                     .workflowId(Objects.nonNull(record.get(PATTERNS.WORKFLOW_ID)) ? record.get(PATTERNS.WORKFLOW_ID).toString() : null)
                     .build();
             });
-        
-        return (List<RetrievedPattern>) (List<?>) results;
+
+        List<RetrievedPattern> typed = (List<RetrievedPattern>) (List<?>) results;
+
+        if (similarityThreshold > 0.0) {
+            int beforeCount = typed.size();
+            typed = typed.stream()
+                    .filter(p -> p.getRelevanceScore() >= similarityThreshold)
+                    .toList();
+            log.debug("Similarity threshold {} filtered {} → {} patterns", similarityThreshold, beforeCount, typed.size());
+        }
+
+        return typed;
     }
     
     /**

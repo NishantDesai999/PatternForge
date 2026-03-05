@@ -4,6 +4,7 @@ import com.patternforge.api.dto.PatternUsageRequest;
 import com.patternforge.jooq.tables.records.ConversationalPatternsRecord;
 import com.patternforge.jooq.tables.records.PatternUsageRecord;
 import com.patternforge.jooq.tables.records.ProjectsRecord;
+import com.patternforge.promotion.PatternPromotionService;
 import com.patternforge.storage.repository.ConversationalPatternRepository;
 import com.patternforge.storage.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +35,7 @@ public class PatternUsageService {
     
     private final ProjectRepository projectRepository;
     private final ConversationalPatternRepository conversationalPatternRepository;
+    private final PatternPromotionService patternPromotionService;
     private final DSLContext dsl;
     
     /**
@@ -68,10 +70,16 @@ public class PatternUsageService {
         updatePatternMetrics(request.getPatternId());
         
         // 4. If conversational pattern with success=true, increment promotion count
+        //    and immediately check if the pattern qualifies for promotion
         if (Objects.nonNull(request.getSuccess()) && request.getSuccess()) {
             incrementConversationalPatternPromotion(request.getPatternId());
+            try {
+                patternPromotionService.checkAndPromotePatterns();
+            } catch (Exception exception) {
+                log.warn("Inline promotion check failed (non-critical): {}", exception.getMessage());
+            }
         }
-        
+
         return usageId;
     }
     

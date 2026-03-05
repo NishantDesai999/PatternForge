@@ -142,8 +142,78 @@ public class McpToolHandler {
             args.has("topK") ? args.get("topK").asInt(10) : null);
 
         ResponseEntity<PatternQueryResponse> response = patternController.queryPatterns(request);
-        String json = objectMapper.writeValueAsString(response.getBody());
-        return textContent(json);
+        PatternQueryResponse body = response.getBody();
+        if (Objects.isNull(body)) {
+            return textContent("{}");
+        }
+
+        // Build a lean response that strips internal metadata the LLM doesn't need
+        // (relevanceScore, successRate, patternData, workflowId, patternReferences UUIDs)
+        String lean = buildLeanQueryResponse(body);
+        return textContent(lean);
+    }
+
+    /**
+     * Builds a lean JSON response for MCP, keeping only fields useful to the LLM agent.
+     * Strips internal scoring/metadata to avoid wasting context tokens.
+     */
+    private String buildLeanQueryResponse(PatternQueryResponse response) throws Exception {
+        ObjectNode root = objectMapper.createObjectNode();
+
+        // Patterns — only title, description, whenToUse, codeExamples, category, patternId
+        ArrayNode patternsNode = objectMapper.createArrayNode();
+        for (var pattern : response.patterns()) {
+            ObjectNode p = objectMapper.createObjectNode();
+            if (Objects.nonNull(pattern.getTitle())) p.put("title", pattern.getTitle());
+            if (Objects.nonNull(pattern.getDescription())) p.put("description", pattern.getDescription());
+            if (Objects.nonNull(pattern.getCategory())) p.put("category", pattern.getCategory());
+            if (Objects.nonNull(pattern.getWhenToUse())) p.put("when_to_use", pattern.getWhenToUse());
+            if (Objects.nonNull(pattern.getPatternId())) p.put("pattern_id", pattern.getPatternId());
+            if (Objects.nonNull(pattern.getCodeExamples()) && !pattern.getCodeExamples().isEmpty()) {
+                p.set("code_examples", objectMapper.valueToTree(pattern.getCodeExamples()));
+            }
+            patternsNode.add(p);
+        }
+        root.set("patterns", patternsNode);
+
+        // Workflow — only steps (action + validation + command) and quality gates
+        if (Objects.nonNull(response.workflow())) {
+            ObjectNode workflowNode = objectMapper.createObjectNode();
+            if (Objects.nonNull(response.workflow().getSteps())) {
+                ArrayNode stepsNode = objectMapper.createArrayNode();
+                for (var step : response.workflow().getSteps()) {
+                    ObjectNode s = objectMapper.createObjectNode();
+                    s.put("step", step.getStep());
+                    if (Objects.nonNull(step.getAction())) s.put("action", step.getAction());
+                    if (Objects.nonNull(step.getTool())) s.put("tool", step.getTool());
+                    if (Objects.nonNull(step.getTarget())) s.put("target", step.getTarget());
+                    if (Objects.nonNull(step.getCommand())) s.put("command", step.getCommand());
+                    if (Objects.nonNull(step.getAgent())) s.put("agent", step.getAgent());
+                    if (Objects.nonNull(step.getValidation())) s.put("validation", step.getValidation());
+                    if (step.isWaitForUserApproval()) s.put("wait_for_approval", true);
+                    if (Objects.nonNull(step.getResolvedPatternNames()) && !step.getResolvedPatternNames().isEmpty()) {
+                        s.set("pattern_names", objectMapper.valueToTree(step.getResolvedPatternNames()));
+                    }
+                    stepsNode.add(s);
+                }
+                workflowNode.set("steps", stepsNode);
+            }
+            if (Objects.nonNull(response.workflow().getQualityGates())) {
+                workflowNode.set("quality_gates", objectMapper.valueToTree(response.workflow().getQualityGates()));
+            }
+            root.set("workflow", workflowNode);
+        }
+
+        // Metadata — just pattern count and token usage for transparency
+        if (Objects.nonNull(response.metadata())) {
+            ObjectNode meta = objectMapper.createObjectNode();
+            meta.put("patterns_retrieved", response.metadata().patternsRetrieved());
+            meta.put("estimated_tokens", response.metadata().estimatedTokens());
+            meta.put("token_budget", response.metadata().tokenBudget());
+            root.set("metadata", meta);
+        }
+
+        return objectMapper.writeValueAsString(root);
     }
 
     private JsonNode handleCapturePattern(JsonNode args) {
