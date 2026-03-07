@@ -69,6 +69,10 @@ patternforge:
     max-project-standards: 3      # top N project standards per query (was unbounded)
     min-similarity-threshold: 0.35  # discard vector results below this cosine similarity
     max-context-tokens: 8000      # token budget — patterns packed greedily by relevance until exhausted (0 to disable)
+    # Dynamic Context Pruning (DCP)
+    adaptive-context-fraction: 0.30   # fraction of remainingContextTokens to use for patterns
+    reinjection-score-threshold: 0.80 # min relevance to re-send an already-sent pattern this conversation
+    task-shift-threshold: 0.40        # cosine similarity below which a task-shift drop signal is emitted
 
   # Pattern extraction via LLM
   extraction:

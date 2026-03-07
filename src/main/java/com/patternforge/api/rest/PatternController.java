@@ -62,13 +62,15 @@ public class PatternController {
     public ResponseEntity<PatternQueryResponse> queryPatterns(@RequestBody PatternQueryRequest request) {
         int topK = Objects.nonNull(request.topK()) ? request.topK() : 10;
 
-        log.info("Querying patterns - task: {}, language: {}, projectPath: {}, conversationId: {}, topK: {}",
-            request.task(), request.language(), request.projectPath(), request.conversationId(), topK);
+        log.info("Querying patterns - task: {}, language: {}, projectPath: {}, conversationId: {}, topK: {}, remainingContextTokens: {}",
+            request.task(), request.language(), request.projectPath(), request.conversationId(), topK,
+            request.remainingContextTokens());
 
         TaskContext taskContext = taskAnalyzer.analyze(request.task(), request.language(), null);
 
         PatternRetriever.RetrievalResult result = patternRetriever.retrieve(
-            taskContext, topK, request.projectPath(), request.conversationId());
+            taskContext, topK, request.projectPath(), request.conversationId(),
+            request.remainingContextTokens());
 
         List<RetrievedPattern> patterns = result.patterns();
 
@@ -80,9 +82,10 @@ public class PatternController {
             taskContext.getTaskType(),
             embeddingService.isAvailable() ? "semantic" : "keyword",
             result.estimatedTokens(),
-            retrievalProperties.getMaxContextTokens());
+            retrievalProperties.getMaxContextTokens(),
+            result.effectiveBudget());
 
-        return ResponseEntity.ok(new PatternQueryResponse(patterns, workflow, metadata));
+        return ResponseEntity.ok(new PatternQueryResponse(patterns, workflow, metadata, result.dropPatternIds()));
     }
 
     @PostMapping("/usage")

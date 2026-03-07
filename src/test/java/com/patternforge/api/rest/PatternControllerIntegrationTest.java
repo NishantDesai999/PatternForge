@@ -218,11 +218,11 @@ class PatternControllerIntegrationTest extends AbstractIntegrationTest {
     void shouldUseDefaultTopKWhenNotProvided() throws Exception {
         // Arrange
         createTestPattern("test-pattern", "Test Pattern", "java");
-        
+
         Map<String, Object> request = new HashMap<>();
         request.put("task", "Write code");
         request.put("language", "java");
-        
+
         // Act & Assert
         mockMvc.perform(post("/api/patterns/query")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -230,6 +230,84 @@ class PatternControllerIntegrationTest extends AbstractIntegrationTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.patterns").isArray())
             .andExpect(jsonPath("$.metadata.patterns_retrieved").exists());
+    }
+
+    // ==================== DCP: Response shape ====================
+
+    @Test
+    void shouldIncludeDropPatternIdsFieldInQueryResponse() throws Exception {
+        Map<String, Object> request = new HashMap<>();
+        request.put("task", "Fix bug");
+        request.put("language", "java");
+
+        mockMvc.perform(post("/api/patterns/query")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.drop_pattern_ids").exists());
+    }
+
+    @Test
+    void shouldIncludeEffectiveTokenBudgetInMetadata() throws Exception {
+        Map<String, Object> request = new HashMap<>();
+        request.put("task", "Add endpoint");
+        request.put("language", "java");
+
+        mockMvc.perform(post("/api/patterns/query")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.metadata.effective_token_budget").exists());
+    }
+
+    @Test
+    void shouldApplyAdaptiveBudgetWhenRemainingContextTokensProvided() throws Exception {
+        Map<String, Object> request = new HashMap<>();
+        request.put("task", "Refactor service");
+        request.put("language", "java");
+        request.put("remainingContextTokens", 1000);
+
+        // 1000 * 0.30 = 300 — effective budget must be at most 300
+        mockMvc.perform(post("/api/patterns/query")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.metadata.effective_token_budget").value(300));
+    }
+
+    @Test
+    void shouldFilterAlreadySentPatternsOnSecondTurn() throws Exception {
+        createTestPattern("dcp-ctrl-global", "DCP Controller Global", "java");
+
+        String conversationId = "ctrl-dcp-" + UUID.randomUUID();
+
+        Map<String, Object> request = new HashMap<>();
+        request.put("task", "Fix null pointer");
+        request.put("language", "java");
+        request.put("conversationId", conversationId);
+
+        // First turn
+        String firstResponse = mockMvc.perform(post("/api/patterns/query")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+
+        int firstCount = objectMapper.readTree(firstResponse)
+            .get("patterns").size();
+
+        // Second turn — same request, same conversation
+        String secondResponse = mockMvc.perform(post("/api/patterns/query")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+
+        int secondCount = objectMapper.readTree(secondResponse)
+            .get("patterns").size();
+
+        // Second turn should have strictly fewer patterns (already-sent filtered)
+        assertThat(secondCount).isLessThan(firstCount);
     }
     
     // ==================== Record Pattern Usage Tests ====================

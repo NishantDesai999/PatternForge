@@ -45,4 +45,31 @@ public class RetrievalProperties {
      * Default: 8000 — keeps pattern context well within a single LLM message.
      */
     private int maxContextTokens = 8000;
+
+    // ── Dynamic Context Pruning (DCP) properties ──────────────────────────────
+
+    /**
+     * When the caller supplies {@code remainingContextTokens}, this fraction of that
+     * value becomes the effective token budget (capped at {@link #maxContextTokens}).
+     * E.g. 0.30 means "use at most 30 % of the agent's remaining context for patterns".
+     * Default: 0.30.
+     */
+    private double adaptiveContextFraction = 0.30;
+
+    /**
+     * Minimum relevance score [0.0, 1.0] required to re-inject a pattern that has
+     * already been sent in the current conversation.  Patterns below this threshold
+     * are skipped on subsequent turns to avoid redundant context.
+     * Default: 0.80.
+     */
+    private double reinjectionScoreThreshold = 0.80;
+
+    /**
+     * Cosine similarity between the current task embedding and the previous turn's
+     * embedding below which a "task shift" is declared.  When a shift is detected
+     * the response includes a {@code dropPatternIds} list so the agent can evict
+     * stale context.
+     * Default: 0.40.
+     */
+    private double taskShiftThreshold = 0.40;
 }

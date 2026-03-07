@@ -139,7 +139,8 @@ public class McpToolHandler {
             getStringArg(args, "language"),
             getStringArg(args, "projectPath"),
             getStringArg(args, "conversationId"),
-            args.has("topK") ? args.get("topK").asInt(10) : null);
+            args.has("topK") ? args.get("topK").asInt(10) : null,
+            args.has("remainingContextTokens") ? args.get("remainingContextTokens").asInt() : null);
 
         ResponseEntity<PatternQueryResponse> response = patternController.queryPatterns(request);
         PatternQueryResponse body = response.getBody();
@@ -210,7 +211,13 @@ public class McpToolHandler {
             meta.put("patterns_retrieved", response.metadata().patternsRetrieved());
             meta.put("estimated_tokens", response.metadata().estimatedTokens());
             meta.put("token_budget", response.metadata().tokenBudget());
+            meta.put("effective_token_budget", response.metadata().effectiveTokenBudget());
             root.set("metadata", meta);
+        }
+
+        // DCP: drop signal — include when non-empty so agent can evict stale context
+        if (Objects.nonNull(response.dropPatternIds()) && !response.dropPatternIds().isEmpty()) {
+            root.set("drop_pattern_ids", objectMapper.valueToTree(response.dropPatternIds()));
         }
 
         return objectMapper.writeValueAsString(root);

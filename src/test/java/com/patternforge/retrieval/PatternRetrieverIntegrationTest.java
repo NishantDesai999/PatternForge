@@ -1,6 +1,7 @@
 package com.patternforge.retrieval;
 
 import com.patternforge.AbstractIntegrationTest;
+import com.patternforge.config.RetrievalProperties;
 import com.patternforge.retrieval.model.RetrievedPattern;
 import com.patternforge.retrieval.model.TaskContext;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,12 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private PatternRetriever patternRetriever;
+
+    @Autowired
+    private ConversationContextTracker conversationContextTracker;
+
+    @Autowired
+    private RetrievalProperties retrievalProperties;
 
     // ==================== Global Standards Always Included ====================
 
@@ -131,6 +138,140 @@ class PatternRetrieverIntegrationTest extends AbstractIntegrationTest {
 
         // Assert
         assertThat(results).isNotEmpty();
+    }
+
+    // ==================== DCP: Conversation-Turn Awareness ====================
+
+    @Test
+    void shouldSkipAlreadySentPatternsOnSubsequentTurns() {
+        // Arrange — one global standard pattern
+        UUID patternId = insertPattern("global-dcp", "DCP Global Standard", true, false);
+
+        TaskContext context = buildContext("general", "java");
+        String conversationId = "dcp-turn-test-" + UUID.randomUUID();
+
+        // Act — first turn: pattern is new, should be returned
+        List<RetrievedPattern> firstTurn = patternRetriever
+            .retrieve(context, 5, null, conversationId, null)
+            .patterns();
+
+        // Assert — pattern appears in first turn
+        boolean inFirstTurn = firstTurn.stream()
+            .anyMatch(p -> patternId.toString().equals(p.getPatternId()));
+        assertThat(inFirstTurn).isTrue();
+
+        // Act — second turn: same task, same conversation — pattern already sent,
+        // relevance score from keyword fallback is well below reinjectionScoreThreshold (0.80)
+        List<RetrievedPattern> secondTurn = patternRetriever
+            .retrieve(context, 5, null, conversationId, null)
+            .patterns();
+
+        // Assert — pattern is NOT returned again (DCP turn-awareness)
+        boolean inSecondTurn = secondTurn.stream()
+            .anyMatch(p -> patternId.toString().equals(p.getPatternId()));
+        assertThat(inSecondTurn).isFalse();
+    }
+
+    @Test
+    void shouldIsolateAlreadySentFilterAcrossConversations() {
+        // Arrange
+        UUID patternId = insertPattern("global-iso", "Isolation Global", true, false);
+
+        TaskContext context = buildContext("general", "java");
+        String convA = "conv-a-" + UUID.randomUUID();
+        String convB = "conv-b-" + UUID.randomUUID();
+
+        // First turn for conv-A — seeds the tracker
+        patternRetriever.retrieve(context, 5, null, convA, null);
+
+        // First turn for conv-B — should see the pattern (different conversation)
+        List<RetrievedPattern> convBFirst = patternRetriever
+            .retrieve(context, 5, null, convB, null)
+            .patterns();
+
+        boolean inConvB = convBFirst.stream()
+            .anyMatch(p -> patternId.toString().equals(p.getPatternId()));
+        assertThat(inConvB).isTrue();
+    }
+
+    // ==================== DCP: Adaptive Token Budget ====================
+
+    @Test
+    void shouldRespectAdaptiveBudgetWhenRemainingContextTokensProvided() {
+        TaskContext context = buildContext("general", "java");
+
+        // Provide a very small remaining context — adaptive budget = 100 * 0.30 = 30 tokens
+        // Even with patterns in DB the result should be tiny; with empty DB it's just 0 tokens
+        PatternRetriever.RetrievalResult result =
+            patternRetriever.retrieve(context, 5, null, null, 100);
+
+        assertThat(result.effectiveBudget()).isEqualTo(30);  // 100 * 0.30
+        assertThat(result.estimatedTokens()).isLessThanOrEqualTo(30);
+    }
+
+    @Test
+    void shouldCapAdaptiveBudgetAtConfiguredMaximum() {
+        TaskContext context = buildContext("general", "java");
+
+        // remainingContextTokens so large that adaptive fraction still exceeds configured max
+        int hugeRemaining = 1_000_000;
+        PatternRetriever.RetrievalResult result =
+            patternRetriever.retrieve(context, 5, null, null, hugeRemaining);
+
+        int configuredMax = retrievalProperties.getMaxContextTokens();
+        assertThat(result.effectiveBudget()).isEqualTo(configuredMax);
+    }
+
+    @Test
+    void shouldUseConfiguredBudgetWhenRemainingContextTokensIsNull() {
+        TaskContext context = buildContext("general", "java");
+
+        PatternRetriever.RetrievalResult result =
+            patternRetriever.retrieve(context, 5, null, null, null);
+
+        int configuredMax = retrievalProperties.getMaxContextTokens();
+        assertThat(result.effectiveBudget()).isEqualTo(configuredMax);
+    }
+
+    // ==================== DCP: computeEffectiveBudget unit coverage ====================
+
+    @Test
+    void computeEffectiveBudget_returnsConfiguredWhenRemainingIsNull() {
+        int budget = patternRetriever.computeEffectiveBudget(null);
+        assertThat(budget).isEqualTo(retrievalProperties.getMaxContextTokens());
+    }
+
+    @Test
+    void computeEffectiveBudget_returnsConfiguredWhenRemainingIsZero() {
+        int budget = patternRetriever.computeEffectiveBudget(0);
+        assertThat(budget).isEqualTo(retrievalProperties.getMaxContextTokens());
+    }
+
+    @Test
+    void computeEffectiveBudget_computesAdaptiveFractionWhenSmaller() {
+        // 1000 * 0.30 = 300, which is less than configured 8000
+        int budget = patternRetriever.computeEffectiveBudget(1000);
+        assertThat(budget).isEqualTo(300);
+    }
+
+    // ==================== DCP: Result fields present ====================
+
+    @Test
+    void shouldReturnNonNullDropPatternIdsEvenWithoutConversationId() {
+        TaskContext context = buildContext("general", "java");
+        PatternRetriever.RetrievalResult result =
+            patternRetriever.retrieve(context, 5, null, null, null);
+        assertThat(result.dropPatternIds()).isNotNull();
+    }
+
+    @Test
+    void shouldReturnEmptyDropPatternIdsOnFirstTurn() {
+        TaskContext context = buildContext("general", "java");
+        String conversationId = "first-turn-drop-test-" + UUID.randomUUID();
+        PatternRetriever.RetrievalResult result =
+            patternRetriever.retrieve(context, 5, null, conversationId, null);
+        // First turn has no previous embedding — drop list must be empty
+        assertThat(result.dropPatternIds()).isEmpty();
     }
 
     // ==================== Helpers ====================
